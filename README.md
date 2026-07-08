@@ -70,7 +70,7 @@ flowchart TB
     acr["Container Registry"] --> aca
 ```
 
-The backend is a **modular monolith** (ASP.NET Core, .NET 8) with clean module seams — Identity,
+The backend is a **modular monolith** (ASP.NET Core, .NET 10) with clean module seams — Identity,
 Social, Questions, Scoring, Leaderboards, Notifications — plus a separate **Workers** host for
 background jobs. All service-to-Azure auth uses a shared **user-assigned managed identity** (no stored
 cloud credentials). See [`docs/architecture.md`](docs/architecture.md) for the full spec and
@@ -80,7 +80,7 @@ cloud credentials). See [`docs/architecture.md`](docs/architecture.md) for the f
 
 | Layer | Choice |
 | --- | --- |
-| API + Workers | ASP.NET Core / .NET 8 (C#) |
+| API + Workers | ASP.NET Core / .NET 10 (C#) |
 | Persistence | EF Core → Azure SQL (prod) / SQLite (dev + tests) |
 | Leaderboards / cache | Azure Cache for Redis (sorted sets) |
 | AuthN | Phone + SMS OTP **and** Apple/Google id_token; app-issued JWT (rotating refresh) |
@@ -118,7 +118,7 @@ called-it/
 
 ### Prerequisites
 
-- **.NET 8 SDK** (`dotnet --version` ≥ 8.0).
+- **.NET 10 SDK** (`dotnet --version` ≥ 10.0).
 - No Azure resources needed: dev uses **SQLite**, logs OTPs to the console, and accepts fake social
   tokens. External adapters (ACS, Notification Hubs, Redis, real OIDC) activate only when configured.
 
