@@ -1,0 +1,111 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, prod]
+        default: dev
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'infra/**'
+      - 'Dockerfile'
+      - 'Dockerfile.workers'
+      - '.github/workflows/deploy.yml'
+
+# OIDC federated login to Azure — no cloud passwords stored in GitHub.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Compute image tag
+        id: tag
+        run: echo "sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      # 1) Converge infrastructure (idempotent). Creates/updates ACR, SQL, Redis,
+      #    Container Apps, etc. Secrets are supplied as environment variables that the
+      #    .bicepparam file reads via readEnvironmentVariable(...).
+      - name: Deploy infrastructure (Bicep)
+        id: infra
+        env:
+          SQL_ADMIN_PASSWORD: ${{ secrets.SQL_ADMIN_PASSWORD }}
+          AUTH_SIGNING_KEY: ${{ secrets.AUTH_SIGNING_KEY }}
+          CONTACTS_PEPPER: ${{ secrets.CONTACTS_PEPPER }}
+          SQL_AAD_ADMIN_OBJECT_ID: ${{ secrets.SQL_AAD_ADMIN_OBJECT_ID }}
+          SQL_AAD_ADMIN_LOGIN: ${{ vars.SQL_AAD_ADMIN_LOGIN }}
+          ACS_FROM_NUMBER: ${{ vars.ACS_FROM_NUMBER }}
+        run: |
+          set -euo pipefail
+          outputs=$(az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "calledit-${ENVIRONMENT}-${{ steps.tag.outputs.sha }}" \
+            --template-file infra/main.bicep \
+            --parameters "infra/main.${ENVIRONMENT}.bicepparam" \
+            --query properties.outputs -o json)
+          echo "acrName=$(echo "$outputs"    | jq -r .acrName.value)"       >> "$GITHUB_OUTPUT"
+          echo "apiName=$(echo "$outputs"    | jq -r .apiName.value)"       >> "$GITHUB_OUTPUT"
+          echo "workersName=$(echo "$outputs"| jq -r .workersName.value)"   >> "$GITHUB_OUTPUT"
+          echo "acrServer=$(echo "$outputs"  | jq -r .acrLoginServer.value)">> "$GITHUB_OUTPUT"
+          echo "apiFqdn=$(echo "$outputs"    | jq -r .apiFqdn.value)"       >> "$GITHUB_OUTPUT"
+
+      # 2) Build both images server-side in ACR (no Docker needed on the runner).
+      - name: Build API image
+        run: |
+          az acr build --registry "${{ steps.infra.outputs.acrName }}" \
+            --image "called-it-api:${{ steps.tag.outputs.sha }}" \
+            --image "called-it-api:latest" \
+            --file Dockerfile .
+
+      - name: Build Workers image
+        run: |
+          az acr build --registry "${{ steps.infra.outputs.acrName }}" \
+            --image "called-it-workers:${{ steps.tag.outputs.sha }}" \
+            --image "called-it-workers:latest" \
+            --file Dockerfile.workers .
+
+      # 3) Roll both Container Apps to the freshly built images.
+      - name: Update API container app
+        run: |
+          az containerapp update \
+            --name "${{ steps.infra.outputs.apiName }}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${{ steps.infra.outputs.acrServer }}/called-it-api:${{ steps.tag.outputs.sha }}"
+
+      - name: Update Workers container app
+        run: |
+          az containerapp update \
+            --name "${{ steps.infra.outputs.workersName }}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${{ steps.infra.outputs.acrServer }}/called-it-workers:${{ steps.tag.outputs.sha }}"
+
+      - name: Summary
+        run: |
+          echo "### Deployed to ${ENVIRONMENT} :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API: https://${{ steps.infra.outputs.apiFqdn }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image tag: \`${{ steps.tag.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

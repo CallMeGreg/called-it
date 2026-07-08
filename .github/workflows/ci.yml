@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build & test (.NET 8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore CalledIt.sln
+
+      - name: Build
+        run: dotnet build CalledIt.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test CalledIt.sln -c Release --no-build --verbosity normal
+
+  validate-infra:
+    name: Validate Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Bicep templates
+        run: |
+          az bicep install
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+          az bicep build-params --file infra/main.dev.bicepparam --stdout > /dev/null
+          az bicep build-params --file infra/main.prod.bicepparam --stdout > /dev/null

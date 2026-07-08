@@ -1,0 +1,21 @@
+# Build artifacts
+**/bin/
+**/obj/
+**/out/
+**/*.user
+
+# Local dev / test databases
+*.db
+*.db-shm
+*.db-wal
+
+# VCS / IDE / docs not needed in image context
+.git/
+.github/
+.vs/
+.idea/
+clients/
+infra/
+tests/
+docs/
+**/*.md
