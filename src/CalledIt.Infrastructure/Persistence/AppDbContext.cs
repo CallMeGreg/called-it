@@ -1,12 +1,18 @@
 using CalledIt.Application.Abstractions;
 using CalledIt.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace CalledIt.Infrastructure.Persistence;
 
 public sealed class AppDbContext : DbContext, IAppDbContext
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+    private readonly bool _isSqlite;
+
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+    {
+        _isSqlite = options.Extensions.Any(e => e.GetType().Name.Contains("Sqlite", StringComparison.Ordinal));
+    }
 
     public DbSet<User> Users => Set<User>();
     public DbSet<FederatedIdentity> FederatedIdentities => Set<FederatedIdentity>();
@@ -25,6 +31,19 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<OtpChallenge> OtpChallenges => Set<OtpChallenge>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // SQLite (dev/test) cannot ORDER BY / compare a native DateTimeOffset. Store the UTC
+        // instant as sortable ticks so queries that order by time work. SQL Server keeps the
+        // native datetimeoffset column (this converter is not applied there).
+        if (_isSqlite)
+        {
+            configurationBuilder.Properties<DateTimeOffset>().HaveConversion<UtcTicksDateTimeOffsetConverter>();
+        }
+
+        base.ConfigureConventions(configurationBuilder);
+    }
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -148,5 +167,17 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         });
 
         base.OnModelCreating(b);
+    }
+}
+
+/// <summary>
+/// Stores a <see cref="DateTimeOffset"/> as its UTC tick count (a monotonic <see cref="long"/>)
+/// so SQLite can order and compare timestamps. All app timestamps are UTC.
+/// </summary>
+internal sealed class UtcTicksDateTimeOffsetConverter : ValueConverter<DateTimeOffset, long>
+{
+    public UtcTicksDateTimeOffsetConverter()
+        : base(v => v.UtcTicks, v => new DateTimeOffset(v, TimeSpan.Zero))
+    {
     }
 }

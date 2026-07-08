@@ -1,25 +1,89 @@
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json.Serialization;
+using CalledIt.Api.Infrastructure;
+using CalledIt.Application;
+using CalledIt.Application.Common;
+using CalledIt.Infrastructure;
+using CalledIt.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
-builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+builder.Services.AddApplication(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration);
+
+// --- Authentication (JWT bearer, matching the tokens issued by JwtTokenService) ---
+var auth = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = auth.Issuer,
+            ValidateAudience = true,
+            ValidAudience = auth.Audience,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(string.IsNullOrWhiteSpace(auth.SigningKey)
+                    ? new string('0', 32)
+                    : auth.SigningKey)),
+            NameClaimType = "sub",
+            RoleClaimType = ClaimTypes.Role,
+            ClockSkew = TimeSpan.FromSeconds(30),
+        };
+    });
+builder.Services.AddAuthorization();
+
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Called It API", Version = "v1" });
+    var scheme = new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" },
+    };
+    c.AddSecurityDefinition("Bearer", scheme);
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement { [scheme] = Array.Empty<string>() });
+});
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Prepare the database (create/seed for SQLite dev/test, migrate for SQL Server).
+using (var scope = app.Services.CreateScope())
+{
+    var initializer = scope.ServiceProvider.GetRequiredService<DbInitializer>();
+    await initializer.InitializeAsync();
+}
+
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
-
+app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
 app.Run();
+
+/// <summary>Exposed so integration tests can host the API with <c>WebApplicationFactory</c>.</summary>
+public partial class Program;
