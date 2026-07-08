@@ -30,6 +30,10 @@ jobs:
   deploy:
     name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
     runs-on: ubuntu-latest
+    # Auto-deploy on push only after CD is enabled (set the repository variable
+    # AZURE_DEPLOY_ENABLED=true once environments + OIDC are configured). Manual
+    # runs via "Run workflow" always proceed. See the manual-setup issue.
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.AZURE_DEPLOY_ENABLED == 'true' }}
     environment: ${{ github.event.inputs.environment || 'dev' }}
     env:
       ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
