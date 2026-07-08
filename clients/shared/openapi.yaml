@@ -1,0 +1,676 @@
+openapi: 3.0.3
+info:
+  title: Called It API
+  version: 1.0.0
+  description: >
+    Backend contract for **Called It** — a daily casual-forecasting game. Every day a single
+    synchronized global set of binary questions "drops"; players lock in a pick (Side A / Side B)
+    or Skip before a hard 6-hour lock, questions auto-resolve, and independent per-category streaks
+    plus a never-resetting Total Score drive the leaderboards.
+
+    This document is the source of truth the iOS (SwiftUI) and Android (Compose) clients build
+    against. Generate typed clients with openapi-generator (see clients/README.md).
+servers:
+  - url: https://{apiFqdn}
+    description: Deployed API (Azure Container Apps)
+    variables:
+      apiFqdn:
+        default: called-it-dev.<region>.azurecontainerapps.io
+  - url: http://localhost:5080
+    description: Local development
+
+tags:
+  - name: Health
+  - name: Auth
+  - name: Daily
+  - name: Leaderboards
+  - name: Friends
+  - name: Contacts
+  - name: Leagues
+  - name: Admin
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+
+  /api/auth/otp:
+    post:
+      tags: [Auth]
+      summary: Start login/registration by texting a one-time passcode
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequestOtpRequest' }
+      responses:
+        '202': { description: OTP dispatched (always 202, even for unknown numbers) }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Complete login/registration (verify OTP + Apple/Google id_token) and issue tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResult' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a valid refresh token for a fresh, rotated access/refresh pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: Rotated tokens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResult' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/auth/devices:
+    post:
+      tags: [Auth]
+      summary: Register or refresh the caller's push device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterDeviceRequest' }
+      responses:
+        '204': { description: Device registered }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/today:
+    get:
+      tags: [Daily]
+      summary: Today's card — the live set with the caller's own picks overlaid
+      responses:
+        '200':
+          description: The current live daily set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailySetView' }
+        '404': { description: No live set right now }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/guesses:
+    post:
+      tags: [Daily]
+      summary: Submit a pick or a skip (rejected after the 6-hour lock)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitGuessRequest' }
+      responses:
+        '200':
+          description: Accepted pick/skip
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GuessResult' }
+        '409':
+          description: The set is locked
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/leaderboards:
+    get:
+      tags: [Leaderboards]
+      summary: Read a leaderboard by metric and scope
+      parameters:
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/BoardType' }
+        - name: scope
+          in: query
+          schema: { $ref: '#/components/schemas/BoardScope' }
+        - name: category
+          in: query
+          description: Category code (required for CategoryStreak/CategoryBestStreak)
+          schema: { type: string, example: sports }
+        - name: count
+          in: query
+          schema: { type: integer, default: 50, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Ranked rows
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeaderboardResult' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/friends/requests:
+    post:
+      tags: [Friends]
+      summary: Send a friend request (auto-accepts a mutual request)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FriendRequest' }
+      responses:
+        '200':
+          description: Friend edge (pending or accepted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FriendView' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/friends/{requesterId}/accept:
+    post:
+      tags: [Friends]
+      summary: Accept a pending friend request
+      parameters:
+        - name: requesterId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Accepted }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/friends:
+    get:
+      tags: [Friends]
+      summary: List accepted friends
+      responses:
+        '200':
+          description: Friends
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FriendView' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/friends/pending:
+    get:
+      tags: [Friends]
+      summary: List incoming pending friend requests
+      responses:
+        '200':
+          description: Pending requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FriendView' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/contacts/match:
+    post:
+      tags: [Contacts]
+      summary: Privacy-preserving contact discovery over peppered E.164 hashes
+      description: >
+        The client sends HMAC-peppered E.164 hashes (never raw numbers) and receives the registered,
+        discoverable users that match. See clients/README.md for the exact hashing recipe.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContactMatchRequest' }
+      responses:
+        '200':
+          description: Matched users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ContactMatch' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/leagues:
+    post:
+      tags: [Leagues]
+      summary: Create a league (caller becomes owner + first member)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLeagueRequest' }
+      responses:
+        '200':
+          description: Created league
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeagueView' }
+        '401': { $ref: '#/components/responses/Problem' }
+    get:
+      tags: [Leagues]
+      summary: List the leagues the caller belongs to
+      responses:
+        '200':
+          description: Leagues
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/LeagueView' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/leagues/join:
+    post:
+      tags: [Leagues]
+      summary: Join a league by its short code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JoinLeagueRequest' }
+      responses:
+        '200':
+          description: Joined league
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeagueView' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/leagues/{leagueId}/members:
+    get:
+      tags: [Leagues]
+      summary: List members of a league
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Members
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/LeagueMemberView' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/admin/questions:
+    post:
+      tags: [Admin]
+      summary: Author a question (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateQuestionCommand' }
+      responses:
+        '200':
+          description: Created question
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionView' }
+        '403': { $ref: '#/components/responses/Problem' }
+    get:
+      tags: [Admin]
+      summary: List questions, optionally filtered by status (admin)
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/QuestionStatus' }
+      responses:
+        '200':
+          description: Questions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/QuestionView' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/admin/daily-sets:
+    post:
+      tags: [Admin]
+      summary: Build & publish the synchronized global set for a drop instant (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BuildDailySetRequest' }
+      responses:
+        '200':
+          description: Built set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailySetView' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/admin/questions/{questionId}/outcome:
+    post:
+      tags: [Admin]
+      summary: Set or amend a question outcome; triggers idempotent recompute (admin)
+      parameters:
+        - name: questionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetOutcomeRequest' }
+      responses:
+        '200':
+          description: Updated question
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionView' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/admin/resolve-due:
+    post:
+      tags: [Admin]
+      summary: Run auto-resolution for all due, unresolved questions (admin)
+      responses:
+        '200':
+          description: Count resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resolved: { type: integer, format: int32 }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/admin/notifications/drop:
+    post:
+      tags: [Admin]
+      summary: Manually broadcast the "today's drop" push (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BroadcastDropRequest' }
+      responses:
+        '202': { description: Broadcast queued }
+        '403': { $ref: '#/components/responses/Problem' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Problem:
+      description: Error (RFC 7807 problem details)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  schemas:
+    Side:
+      type: string
+      enum: [A, B]
+      description: The two sides of a binary question.
+    Outcome:
+      type: string
+      enum: [Unresolved, SideA, SideB, Void]
+    SocialProvider:
+      type: string
+      enum: [Apple, Google]
+    DevicePlatform:
+      type: string
+      enum: [iOS, Android]
+    BoardType:
+      type: string
+      enum: [CategoryStreak, CategoryBestStreak, OverallStreak, TotalScore]
+      default: TotalScore
+    BoardScope:
+      type: string
+      enum: [Global, Friends]
+      default: Global
+    QuestionStatus:
+      type: string
+      enum: [Draft, Approved, Published, Resolved, Void]
+
+    HealthStatus:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        utc: { type: string, format: date-time }
+
+    RequestOtpRequest:
+      type: object
+      required: [phoneE164]
+      properties:
+        phoneE164: { type: string, example: '+15555550100' }
+
+    LoginRequest:
+      type: object
+      required: [phoneE164, code, provider, idToken]
+      properties:
+        phoneE164: { type: string, example: '+15555550100' }
+        code: { type: string, description: OTP from the SMS, example: '123456' }
+        provider: { $ref: '#/components/schemas/SocialProvider' }
+        idToken: { type: string, description: Apple/Google id_token (JWT) }
+        displayName: { type: string, nullable: true }
+        platform: { $ref: '#/components/schemas/DevicePlatform' }
+        pushToken: { type: string, nullable: true }
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+
+    RegisterDeviceRequest:
+      type: object
+      required: [platform, pushToken]
+      properties:
+        platform: { $ref: '#/components/schemas/DevicePlatform' }
+        pushToken: { type: string }
+
+    AuthResult:
+      type: object
+      properties:
+        accessToken: { type: string }
+        accessTokenExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string }
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+        isAdmin: { type: boolean }
+
+    SubmitGuessRequest:
+      type: object
+      required: [questionId, skip]
+      properties:
+        questionId: { type: string, format: uuid }
+        pick:
+          allOf: [{ $ref: '#/components/schemas/Side' }]
+          nullable: true
+          description: Required unless skip is true.
+        skip: { type: boolean }
+
+    GuessResult:
+      type: object
+      properties:
+        questionId: { type: string, format: uuid }
+        categoryCode: { type: string }
+        pick:
+          allOf: [{ $ref: '#/components/schemas/Side' }]
+          nullable: true
+        isSkip: { type: boolean }
+        submittedAt: { type: string, format: date-time }
+
+    DailySetQuestionView:
+      type: object
+      properties:
+        questionId: { type: string, format: uuid }
+        categoryCode: { type: string, example: pop_culture }
+        categoryName: { type: string, example: Pop Culture }
+        text: { type: string }
+        sideALabel: { type: string }
+        sideBLabel: { type: string }
+        myPick:
+          allOf: [{ $ref: '#/components/schemas/Side' }]
+          nullable: true
+        mySkip: { type: boolean }
+        outcome: { $ref: '#/components/schemas/Outcome' }
+
+    DailySetView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        dropAtUtc: { type: string, format: date-time }
+        locksAtUtc: { type: string, format: date-time }
+        isOpen: { type: boolean }
+        questions:
+          type: array
+          items: { $ref: '#/components/schemas/DailySetQuestionView' }
+
+    LeaderboardRow:
+      type: object
+      properties:
+        rank: { type: integer, format: int64 }
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+        score: { type: number, format: double }
+        isMe: { type: boolean }
+
+    LeaderboardResult:
+      type: object
+      properties:
+        type: { $ref: '#/components/schemas/BoardType' }
+        scope: { $ref: '#/components/schemas/BoardScope' }
+        categoryCode: { type: string, nullable: true }
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/LeaderboardRow' }
+
+    FriendRequest:
+      type: object
+      required: [toUserId]
+      properties:
+        toUserId: { type: string, format: uuid }
+
+    FriendView:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+        status: { type: string, example: Accepted }
+
+    ContactMatchRequest:
+      type: object
+      required: [hashedPhones]
+      properties:
+        hashedPhones:
+          type: array
+          items: { type: string, description: HMAC-peppered hash of an E.164 number }
+
+    ContactMatch:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+
+    CreateLeagueRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+
+    JoinLeagueRequest:
+      type: object
+      required: [joinCode]
+      properties:
+        joinCode: { type: string }
+
+    LeagueView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        joinCode: { type: string }
+        memberCount: { type: integer, format: int32 }
+
+    LeagueMemberView:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+
+    CreateQuestionCommand:
+      type: object
+      required: [categoryCode, text, sideALabel, sideBLabel, resolutionSourceKey, resolutionRule, resolvesAt]
+      properties:
+        categoryCode: { type: string, example: sports }
+        text: { type: string }
+        sideALabel: { type: string }
+        sideBLabel: { type: string }
+        resolutionSourceKey: { type: string, example: stub }
+        resolutionRule: { type: string, example: 'outcome=a' }
+        resolvesAt: { type: string, format: date-time }
+
+    QuestionView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        categoryCode: { type: string }
+        text: { type: string }
+        sideALabel: { type: string }
+        sideBLabel: { type: string }
+        status: { type: string }
+        outcome: { type: string }
+        outcomeSource: { type: string }
+        resolvesAt: { type: string, format: date-time }
+
+    BuildDailySetRequest:
+      type: object
+      required: [dropAtUtc]
+      properties:
+        dropAtUtc: { type: string, format: date-time }
+
+    SetOutcomeRequest:
+      type: object
+      required: [outcome, reason]
+      properties:
+        outcome: { $ref: '#/components/schemas/Outcome' }
+        reason: { type: string }
+
+    BroadcastDropRequest:
+      type: object
+      required: [dailySetId]
+      properties:
+        dailySetId: { type: string, format: uuid }
+
+    ProblemDetails:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer, format: int32 }
+        detail: { type: string }
+        instance: { type: string }
