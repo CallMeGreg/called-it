@@ -15,4 +15,15 @@ public sealed class AuthOptions
     public int RefreshTokenDays { get; set; } = 30;
     public int OtpMinutes { get; set; } = 5;
     public int OtpMaxAttempts { get; set; } = 5;
+
+    // --- OTP request throttling (anti SMS-pumping / toll fraud) ---
+
+    /// <summary>Minimum seconds between consecutive OTP sends to the same phone number.</summary>
+    public int OtpResendCooldownSeconds { get; set; } = 60;
+
+    /// <summary>Maximum OTP sends to the same phone number within a rolling hour.</summary>
+    public int OtpRequestsPerHour { get; set; } = 5;
+
+    /// <summary>Maximum OTP sends to the same phone number within a rolling 24 hours.</summary>
+    public int OtpRequestsPerDay { get; set; } = 10;
 }

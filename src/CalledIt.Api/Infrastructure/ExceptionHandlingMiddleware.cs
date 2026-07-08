@@ -44,6 +44,7 @@ public sealed class ExceptionHandlingMiddleware
         NotFoundException => StatusCodes.Status404NotFound,
         ConflictException => StatusCodes.Status409Conflict,
         SubmissionLockedException => StatusCodes.Status423Locked,
+        TooManyRequestsException => StatusCodes.Status429TooManyRequests,
         _ => StatusCodes.Status400BadRequest,
     };
 
@@ -54,6 +55,7 @@ public sealed class ExceptionHandlingMiddleware
         NotFoundException => "Not found",
         ConflictException => "Conflict",
         SubmissionLockedException => "Submission window closed",
+        TooManyRequestsException => "Too many requests",
         _ => "Request error",
     };
 

@@ -46,6 +46,9 @@ public sealed class AuthService
     public async Task RequestOtpAsync(RequestOtpCommand cmd, CancellationToken ct = default)
     {
         var phone = NormalizePhone(cmd.PhoneE164);
+
+        await EnforceOtpSendLimitsAsync(phone, ct);
+
         var code = GenerateOtpCode();
 
         _db.OtpChallenges.Add(new OtpChallenge
@@ -58,6 +61,43 @@ public sealed class AuthService
         await _db.SaveChangesAsync(ct);
 
         await _sms.SendOtpAsync(phone, code, ct);
+    }
+
+    /// <summary>
+    /// Rate-limits OTP sends per phone number to defend against SMS-pumping / toll fraud: a short
+    /// resend cooldown plus rolling hourly and daily caps. Counts are derived from the challenge
+    /// history (server-authoritative clock) so the limit holds across API replicas.
+    /// </summary>
+    private async Task EnforceOtpSendLimitsAsync(string phone, CancellationToken ct)
+    {
+        var now = _clock.UtcNow;
+        var hourAgo = now.AddHours(-1);
+        var dayAgo = now.AddDays(-1);
+
+        var recent = await _db.OtpChallenges
+            .Where(c => c.PhoneE164 == phone && c.CreatedAt >= dayAgo)
+            .Select(c => c.CreatedAt)
+            .ToListAsync(ct);
+
+        if (_auth.OtpResendCooldownSeconds > 0 && recent.Count > 0)
+        {
+            var last = recent.Max();
+            if ((now - last).TotalSeconds < _auth.OtpResendCooldownSeconds)
+            {
+                throw new TooManyRequestsException(
+                    "A code was just sent. Please wait a moment before requesting another.");
+            }
+        }
+
+        if (_auth.OtpRequestsPerHour > 0 && recent.Count(c => c >= hourAgo) >= _auth.OtpRequestsPerHour)
+        {
+            throw new TooManyRequestsException("Too many code requests. Please try again later.");
+        }
+
+        if (_auth.OtpRequestsPerDay > 0 && recent.Count >= _auth.OtpRequestsPerDay)
+        {
+            throw new TooManyRequestsException("Daily code request limit reached. Please try again tomorrow.");
+        }
     }
 
     public async Task<AuthResult> RegisterOrLoginAsync(RegisterOrLoginCommand cmd, CancellationToken ct = default)

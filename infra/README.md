@@ -74,6 +74,31 @@ ALTER ROLE db_ddladmin    ADD MEMBER [called-it-<env>-id];  -- allows EF Core mi
 The API applies the EF Core schema on startup (or run migrations from CI). Until the contained user
 exists, switch `ConnectionStrings__Database` to a SQL-auth string using `SQL_ADMIN_PASSWORD`.
 
+Once the contained user exists, set `SQL_AAD_ONLY_AUTH=true` (prod) to disable SQL-auth logins so the
+server only accepts Entra identities — this removes the internet-facing admin password as an attack
+surface. Do **not** enable it before the contained user is created, or the apps will be locked out.
+
+## Security posture
+
+Baked into the templates:
+
+- **Managed identity** for all service-to-Azure auth (ACR pull, Key Vault, Storage, App Config, SQL) —
+  no credentials in code. Key Vault uses RBAC + soft-delete + purge protection; ACR admin user and App
+  Configuration local auth are disabled.
+- **SQL:** TLS 1.2 floor, optional Entra-only auth (`SQL_AAD_ONLY_AUTH`), and **Microsoft Defender for
+  SQL** (`enableDefender`, on by default) for SQL-injection / anomalous-login / exfiltration alerts.
+- **Storage:** public blob access off, shared-key auth **disabled** (managed-identity only), HTTPS-only,
+  TLS 1.2, and 7-day blob/container soft-delete.
+- **Redis:** non-SSL port disabled, TLS 1.2. **Container Apps:** `allowInsecure:false` (HTTPS ingress).
+- **OTP abuse:** SMS sends are rate-limited in the API (per-phone cooldown + hourly/daily caps) to
+  defend against SMS-pumping / toll fraud — see `Auth:Otp*` settings.
+
+Recommended next hardening (needs a decision / subscription action — tracked in the manual-setup issue):
+**Azure Front Door + WAF** (rate-limit / bot / geo rules), **Microsoft Defender for Cloud** plans,
+**Apple App Attest / Google Play Integrity** attestation on the OTP + write endpoints, **ACS SMS spend
+alerts**, and **Private Endpoints + VNet integration** to set `publicNetworkAccess:'Disabled'` on SQL /
+Key Vault / Redis / Storage.
+
 ## Notes
 
 - `acsFromNumber` is empty until you purchase an ACS number — until then the app falls back to the

@@ -32,3 +32,10 @@ public sealed class SubmissionLockedException : AppException
     public SubmissionLockedException(string message = "The submission window for this set is closed.")
         : base(message) { }
 }
+
+/// <summary>Thrown when a client exceeds a rate limit (e.g. requesting OTP codes too frequently).</summary>
+public sealed class TooManyRequestsException : AppException
+{
+    public TooManyRequestsException(string message = "Too many requests. Please try again later.")
+        : base(message) { }
+}

@@ -10,6 +10,11 @@ param sqlAdministratorPassword = readEnvironmentVariable('SQL_ADMIN_PASSWORD', '
 param sqlAadAdminObjectId = readEnvironmentVariable('SQL_AAD_ADMIN_OBJECT_ID', '')
 param sqlAadAdminLogin = readEnvironmentVariable('SQL_AAD_ADMIN_LOGIN', '')
 
+// After the one-time managed-identity contained-user step (see infra/README.md), set
+// SQL_AAD_ONLY_AUTH=true to disable SQL-auth logins so only Entra identities can connect.
+// Leave false for the very first deploy (before the contained user exists) to avoid lockout.
+param sqlAadOnlyAuthentication = toLower(readEnvironmentVariable('SQL_AAD_ONLY_AUTH', 'false')) == 'true'
+
 // App secrets (supplied by CI from Key Vault / GitHub secrets).
 param authSigningKey = readEnvironmentVariable('AUTH_SIGNING_KEY', '')
 param contactsPepper = readEnvironmentVariable('CONTACTS_PEPPER', '')

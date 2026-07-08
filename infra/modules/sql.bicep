@@ -26,6 +26,12 @@ param aadAdminObjectId string = ''
 @description('Display name/login for the Entra SQL admin (when object id is provided).')
 param aadAdminLogin string = ''
 
+@description('When true (and an Entra admin is set), disable SQL-auth logins so only Entra identities can connect. Recommended for production once the managed-identity contained user exists.')
+param aadOnlyAuthentication bool = false
+
+@description('Enable Microsoft Defender for SQL (advanced threat protection) on the server.')
+param enableDefender bool = true
+
 @description('Database SKU name, e.g. GP_S_Gen5_1 (serverless) or S0.')
 param skuName string = 'GP_S_Gen5_1'
 
@@ -50,12 +56,25 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
       sid: aadAdminObjectId
       tenantId: tenant().tenantId
       principalType: 'User'
-      azureADOnlyAuthentication: false
+      azureADOnlyAuthentication: aadOnlyAuthentication
     } : null
   }
 }
 
-// Allow other Azure services (e.g. Container Apps) to reach the server.
+// Microsoft Defender for SQL — anomalous-login, SQL-injection, and data-exfiltration threat alerts.
+resource defenderForSql 'Microsoft.Sql/servers/securityAlertPolicies@2023-08-01-preview' = if (enableDefender) {
+  parent: sqlServer
+  name: 'Default'
+  properties: {
+    state: 'Enabled'
+  }
+}
+
+// Allow other Azure services (e.g. Container Apps, which have no stable egress IP without a VNet) to
+// reach the server. NOTE: the 0.0.0.0 rule is the "Allow Azure services" toggle — it permits any
+// Azure-hosted resource, not just ours. Prefer a Private Endpoint + VNet integration and
+// publicNetworkAccess:'Disabled' for production; Defender for SQL + Entra-only auth mitigate the
+// residual exposure until then.
 resource allowAzure 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
   parent: sqlServer
   name: 'AllowAllAzureIps'

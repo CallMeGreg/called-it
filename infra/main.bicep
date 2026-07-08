@@ -28,6 +28,9 @@ param sqlAadAdminObjectId string = ''
 @description('Optional Entra admin login/display name for the SQL server.')
 param sqlAadAdminLogin string = ''
 
+@description('Disable SQL-auth logins so only Entra identities can connect (requires an Entra admin + the managed-identity contained user). Recommended true for production.')
+param sqlAadOnlyAuthentication bool = false
+
 // --- App secrets ---
 @description('JWT signing key (>= 32 chars). Store in Key Vault / CI secret, never in source.')
 @secure()
@@ -150,6 +153,7 @@ module sql 'modules/sql.bicep' = {
     administratorPassword: sqlAdministratorPassword
     aadAdminObjectId: sqlAadAdminObjectId
     aadAdminLogin: sqlAadAdminLogin
+    aadOnlyAuthentication: sqlAadOnlyAuthentication
   }
 }
 

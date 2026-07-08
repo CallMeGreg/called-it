@@ -24,6 +24,11 @@ public sealed class TestApp : IDisposable
     public IServiceProvider Services { get; }
 
     public TestApp()
+        : this(null)
+    {
+    }
+
+    public TestApp(IDictionary<string, string?>? configOverrides)
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"calledit-tests-{Guid.NewGuid():N}.db");
 
@@ -36,6 +41,14 @@ public sealed class TestApp : IDisposable
             ["Contacts:Pepper"] = "unit-tests-pepper",
             ["Game:AdminBootstrapPhones:0"] = "+15555550100",
         };
+
+        if (configOverrides is not null)
+        {
+            foreach (var kvp in configOverrides)
+            {
+                settings[kvp.Key] = kvp.Value;
+            }
+        }
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
 
@@ -86,6 +99,16 @@ public sealed class TestApp : IDisposable
         using var scope = Services.CreateScope();
         return scope.ServiceProvider.GetRequiredService<IPhoneHasher>().Hash(phone);
     }
+
+    /// <summary>Requests an OTP for the given phone via the real AuthService (exercises throttling).</summary>
+    public Task RequestOtpAsync(string phone)
+        => ScopedAsync(sp => sp.GetRequiredService<Identity.AuthService>()
+            .RequestOtpAsync(new Identity.RequestOtpCommand(phone)));
+
+    /// <summary>Counts OTP challenges issued for a phone (a proxy for how many SMS were sent).</summary>
+    public Task<int> OtpChallengeCountAsync(string phone)
+        => ScopedAsync(sp => Task.FromResult(
+            sp.GetRequiredService<IAppDbContext>().OtpChallenges.Count(c => c.PhoneE164 == phone)));
 
     /// <summary>Creates one approved, auto-resolvable question per category then builds the set.</summary>
     public Task<DailySetView> BuildSetWithQuestionsAsync(
