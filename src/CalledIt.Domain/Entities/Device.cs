@@ -9,7 +9,7 @@ public class Device
 
     public DevicePlatform Platform { get; set; }
 
-    /// <summary>APNs / FCM registration token.</summary>
+    /// <summary>APNs device registration token.</summary>
     public string PushToken { get; set; } = string.Empty;
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

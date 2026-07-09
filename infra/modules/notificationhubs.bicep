@@ -1,5 +1,5 @@
-// Azure Notification Hubs — single fan-out to APNs + FCM for the daily-drop broadcast and reminders.
-// APNs/FCM credentials are configured out-of-band (see the manual-setup issue). The namespace-level
+// Azure Notification Hubs — fan-out to APNs for the daily-drop broadcast and reminders.
+// APNs credentials are configured out-of-band (see the manual-setup issue). The namespace-level
 // connection string (with Listen+Send) is returned for injection as a Container App secret.
 @description('Azure region for the resources.')
 param location string
