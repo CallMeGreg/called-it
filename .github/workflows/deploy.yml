@@ -78,20 +78,36 @@ jobs:
           echo "acrServer=$(echo "$outputs"  | jq -r .acrLoginServer.value)">> "$GITHUB_OUTPUT"
           echo "apiFqdn=$(echo "$outputs"    | jq -r .apiFqdn.value)"       >> "$GITHUB_OUTPUT"
 
-      # 2) Build both images server-side in ACR (no Docker needed on the runner).
-      - name: Build API image
-        run: |
-          az acr build --registry "${{ steps.infra.outputs.acrName }}" \
-            --image "called-it-api:${{ steps.tag.outputs.sha }}" \
-            --image "called-it-api:latest" \
-            --file Dockerfile .
+      # 2) Build both images on the runner and push to ACR.
+      #    We build here (rather than server-side via `az acr build`) because
+      #    `az acr build` runs an ACR Tasks quick task, and some subscriptions
+      #    block that with `TasksOperationsNotAllowed`. Pushing from the runner
+      #    only needs data-plane push rights, which the deploy identity's
+      #    Contributor role already grants. ubuntu-latest ships Docker/BuildKit.
+      - name: Log in to ACR
+        run: az acr login --name "${{ steps.infra.outputs.acrName }}"
 
-      - name: Build Workers image
+      - name: Build and push API image
+        env:
+          ACR_SERVER: ${{ steps.infra.outputs.acrServer }}
+          SHA: ${{ steps.tag.outputs.sha }}
         run: |
-          az acr build --registry "${{ steps.infra.outputs.acrName }}" \
-            --image "called-it-workers:${{ steps.tag.outputs.sha }}" \
-            --image "called-it-workers:latest" \
-            --file Dockerfile.workers .
+          docker build --file Dockerfile \
+            --tag "$ACR_SERVER/called-it-api:$SHA" \
+            --tag "$ACR_SERVER/called-it-api:latest" .
+          docker push "$ACR_SERVER/called-it-api:$SHA"
+          docker push "$ACR_SERVER/called-it-api:latest"
+
+      - name: Build and push Workers image
+        env:
+          ACR_SERVER: ${{ steps.infra.outputs.acrServer }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        run: |
+          docker build --file Dockerfile.workers \
+            --tag "$ACR_SERVER/called-it-workers:$SHA" \
+            --tag "$ACR_SERVER/called-it-workers:latest" .
+          docker push "$ACR_SERVER/called-it-workers:$SHA"
+          docker push "$ACR_SERVER/called-it-workers:latest"
 
       # 3) Roll both Container Apps to the freshly built images.
       - name: Update API container app

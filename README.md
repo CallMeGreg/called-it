@@ -209,8 +209,8 @@ affected users' streaks, totals, and leaderboards — so corrections are always 
 - **CI** (`.github/workflows/ci.yml`): restores, builds, and tests the solution on every PR and push
   to `main`, and validates the Bicep templates.
 - **CD** (`.github/workflows/deploy.yml`): logs in to Azure with **OIDC** (no stored cloud secrets),
-  converges infrastructure with Bicep, builds both images with `az acr build`, and rolls the Container
-  Apps. Manual `dev`/`prod` dispatch; auto-deploys to `dev` on `main` once the repo variable
+  converges infrastructure with Bicep, builds both images on the runner and pushes them to ACR, and
+  rolls the Container Apps. Manual `dev`/`prod` dispatch; auto-deploys to `dev` on `main` once the repo variable
   `AZURE_DEPLOY_ENABLED=true` is set.
 
 Provisioning specifics and the one-time SQL managed-identity step are in
