@@ -44,7 +44,7 @@ Build a daily casual-forecasting app with private (friends) + global leaderboard
               └───┬───────┬────────┘
       ┌───────────┘       └───────────────┐
       ▼                                   ▼
- Azure SQL DB                     Azure Cache for Redis
+ Azure SQL DB                     Azure Managed Redis
  (system of record)              (leaderboards, hot cache,
       │                            OTP/rate-limit counters)
       │
@@ -109,7 +109,7 @@ keys in **Key Vault**; per-device sessions; account-deletion + data-export endpo
 ## 5. Data stores
 - **Azure SQL Database** — system of record: users, identities, devices, friendships, leagues,
   questions, categories, daily sets, guesses, scores, resolution sources, audit.
-- **Azure Cache for Redis** — real-time **leaderboards (Sorted Sets)**, hot cache (today's set),
+- **Azure Managed Redis** — real-time **leaderboards (Sorted Sets)**, hot cache (today's set),
   OTP/rate-limit counters, refresh-token revocation, contact-match acceleration.
 - **Azure Blob Storage + Front Door/CDN** — question media, category icons, generated share-card
   images.
@@ -279,7 +279,7 @@ Sorted Sets.
 | Background jobs, scheduler, resolvers | Azure Functions + Durable Functions |
 | Eventing / queues | Azure Service Bus + Event Grid |
 | System of record | Azure SQL Database |
-| Leaderboards / cache | Azure Cache for Redis |
+| Leaderboards / cache | Azure Managed Redis |
 | Media / share cards | Azure Blob Storage + Front Door/CDN |
 | SMS OTP | Azure Communication Services |
 | Push (APNs) | Azure Notification Hubs |

@@ -59,14 +59,11 @@ param workersImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworl
 @description('ACR SKU.')
 param acrSku string = 'Basic'
 
-@description('Redis SKU name.')
-param redisSkuName string = 'Basic'
+@description('Azure Managed Redis SKU (e.g. Balanced_B0 is the smallest).')
+param redisSkuName string = 'Balanced_B0'
 
-@description('Redis SKU family.')
-param redisSkuFamily string = 'C'
-
-@description('Redis capacity.')
-param redisSkuCapacity int = 0
+@description('Enable Azure Managed Redis high availability (dataset replication). Recommended for production.')
+param redisHighAvailability bool = false
 
 @description('Minimum container replicas.')
 param minReplicas int = 1
@@ -165,8 +162,7 @@ module redis 'modules/redis.bicep' = {
     redisName: redisName
     tags: tags
     skuName: redisSkuName
-    skuFamily: redisSkuFamily
-    skuCapacity: redisSkuCapacity
+    highAvailability: redisHighAvailability
   }
 }
 

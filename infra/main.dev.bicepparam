@@ -25,8 +25,7 @@ param workersImage = readEnvironmentVariable('WORKERS_IMAGE', 'mcr.microsoft.com
 
 // Sizing — smallest footprint for dev.
 param acrSku = 'Basic'
-param redisSkuName = 'Basic'
-param redisSkuFamily = 'C'
-param redisSkuCapacity = 0
+param redisSkuName = 'Balanced_B0'
+param redisHighAvailability = false
 param minReplicas = 1
 param maxReplicas = 2
