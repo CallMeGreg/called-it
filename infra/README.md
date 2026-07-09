@@ -8,7 +8,7 @@ Modular, resource-group-scoped IaC for **Called It**. One deployment provisions 
 | Compute (Workers, no ingress) | Azure Container Apps |
 | Container images | Azure Container Registry |
 | System of record | Azure SQL Database (serverless) |
-| Leaderboards / cache | Azure Cache for Redis |
+| Leaderboards / cache | Azure Managed Redis |
 | Media / share cards | Azure Blob Storage |
 | SMS OTP | Azure Communication Services |
 | Push (APNs) | Azure Notification Hubs |
@@ -89,7 +89,7 @@ Baked into the templates:
   SQL** (`enableDefender`, on by default) for SQL-injection / anomalous-login / exfiltration alerts.
 - **Storage:** public blob access off, shared-key auth **disabled** (managed-identity only), HTTPS-only,
   TLS 1.2, and 7-day blob/container soft-delete.
-- **Redis:** non-SSL port disabled, TLS 1.2. **Container Apps:** `allowInsecure:false` (HTTPS ingress).
+- **Redis (Azure Managed Redis):** TLS-only (Encrypted) client protocol, TLS 1.2 floor, port 10000. **Container Apps:** `allowInsecure:false` (HTTPS ingress).
 - **OTP abuse:** SMS sends are rate-limited in the API (per-phone cooldown + hourly/daily caps) to
   defend against SMS-pumping / toll fraud — see `Auth:Otp*` settings.
 

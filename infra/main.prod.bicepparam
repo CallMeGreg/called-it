@@ -31,8 +31,7 @@ param workersImage = readEnvironmentVariable('WORKERS_IMAGE', 'mcr.microsoft.com
 
 // Sizing — resilient footprint for production.
 param acrSku = 'Standard'
-param redisSkuName = 'Standard'
-param redisSkuFamily = 'C'
-param redisSkuCapacity = 1
+param redisSkuName = 'Balanced_B1'
+param redisHighAvailability = true
 param minReplicas = 2
 param maxReplicas = 10

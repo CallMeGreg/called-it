@@ -55,7 +55,7 @@ flowchart TB
 
     api --> sql[("Azure SQL<br/>system of record")]
     wrk --> sql
-    api --> redis[("Azure Cache for Redis<br/>leaderboards")]
+    api --> redis[("Azure Managed Redis<br/>leaderboards")]
     wrk --> redis
     api --> acs["Azure Communication<br/>Services · SMS OTP"]
     wrk --> nh["Azure Notification Hubs<br/>APNs push"]
@@ -81,7 +81,7 @@ cloud credentials). See [`docs/architecture.md`](docs/architecture.md) for the f
 | --- | --- |
 | API + Workers | ASP.NET Core / .NET 10 (C#) |
 | Persistence | EF Core → Azure SQL (prod) / SQLite (dev + tests) |
-| Leaderboards / cache | Azure Cache for Redis (sorted sets) |
+| Leaderboards / cache | Azure Managed Redis (sorted sets) |
 | AuthN | Phone + SMS OTP **and** Apple/Google id_token; app-issued JWT (rotating refresh) |
 | SMS | Azure Communication Services |
 | Push | Azure Notification Hubs (APNs) |
