@@ -11,7 +11,7 @@ Modular, resource-group-scoped IaC for **Called It**. One deployment provisions 
 | Leaderboards / cache | Azure Cache for Redis |
 | Media / share cards | Azure Blob Storage |
 | SMS OTP | Azure Communication Services |
-| Push (APNs + FCM) | Azure Notification Hubs |
+| Push (APNs) | Azure Notification Hubs |
 | Secrets | Azure Key Vault (RBAC) |
 | Config / feature flags | Azure App Configuration |
 | Observability | Log Analytics + Application Insights |
@@ -95,14 +95,14 @@ Baked into the templates:
 
 Recommended next hardening (needs a decision / subscription action — tracked in the manual-setup issue):
 **Azure Front Door + WAF** (rate-limit / bot / geo rules), **Microsoft Defender for Cloud** plans,
-**Apple App Attest / Google Play Integrity** attestation on the OTP + write endpoints, **ACS SMS spend
+**Apple App Attest / DeviceCheck** attestation on the OTP + write endpoints, **ACS SMS spend
 alerts**, and **Private Endpoints + VNet integration** to set `publicNetworkAccess:'Disabled'` on SQL /
 Key Vault / Redis / Storage.
 
 ## Notes
 
 - `acsFromNumber` is empty until you purchase an ACS number — until then the app falls back to the
-  dev SMS sender (which logs the OTP). Notification Hubs still needs APNs/FCM credentials configured
+  dev SMS sender (which logs the OTP). Notification Hubs still needs APNs credentials configured
   before real pushes succeed. Both are covered in the repository's manual-setup issue.
 - Validate locally without deploying: `bicep build infra/main.bicep` and
   `bicep build-params infra/main.dev.bicepparam`.

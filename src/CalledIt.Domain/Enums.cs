@@ -51,10 +51,10 @@ public enum SocialProvider
     Google = 1,
 }
 
+/// <summary>Client platform. v1 is iOS only; kept as an enum for post-MVP expansion.</summary>
 public enum DevicePlatform
 {
     iOS = 0,
-    Android = 1,
 }
 
 public enum FriendshipStatus

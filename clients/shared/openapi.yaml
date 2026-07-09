@@ -8,7 +8,7 @@ info:
     or Skip before a hard 6-hour lock, questions auto-resolve, and independent per-category streaks
     plus a never-resetting Total Score drive the leaderboards.
 
-    This document is the source of truth the iOS (SwiftUI) and Android (Compose) clients build
+    This document is the source of truth the iOS (SwiftUI) client builds
     against. Generate typed clients with openapi-generator (see clients/README.md).
 servers:
   - url: https://{apiFqdn}
@@ -442,7 +442,7 @@ components:
       enum: [Apple, Google]
     DevicePlatform:
       type: string
-      enum: [iOS, Android]
+      enum: [iOS]
     BoardType:
       type: string
       enum: [CategoryStreak, CategoryBestStreak, OverallStreak, TotalScore]

@@ -11,7 +11,7 @@ struct LoginRequest: Codable {
     let provider: String       // "Apple" | "Google"
     let idToken: String
     let displayName: String?
-    let platform: String?      // "iOS" | "Android"
+    let platform: String?      // "iOS"
     let pushToken: String?
 }
 

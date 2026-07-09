@@ -4,7 +4,7 @@
 Build a daily casual-forecasting app with private (friends) + global leaderboards.
 
 **Locked decisions**
-- **Clients:** Fully native — **iOS (Swift/SwiftUI)** + **Android (Kotlin/Jetpack Compose)**.
+- **Client:** Native **iOS (Swift/SwiftUI)**.
 - **Auth:** **Phone-number = primary ID**, verified by **SMS OTP**, **plus mandatory Sign in with
   Apple / Google** from day one (security + account recovery).
 - **Cloud:** **Azure** for all services.
@@ -29,10 +29,10 @@ Build a daily casual-forecasting app with private (friends) + global leaderboard
 ## 2. High-level architecture
 
 ```
-        iOS (Swift)              Android (Kotlin)
-             \                       /
-              \   HTTPS (REST/JSON)  /
-               \                    /
+                    iOS (Swift)
+                         │
+                 HTTPS (REST/JSON)
+                         │
         ┌────────────────────────────────┐
         │   Azure Front Door (WAF/CDN/TLS)│
         └───────────────┬────────────────┘
@@ -56,7 +56,7 @@ Build a daily casual-forecasting app with private (friends) + global leaderboard
  Azure Functions / Durable Functions (background plane)
    • Daily Set Builder (timer)         • Resolution engine (timer/event)
    • Scoring worker                    • Leaderboard updater
-   • Notification dispatcher  ───────► Azure Notification Hubs ─► APNs + FCM
+   • Notification dispatcher  ───────► Azure Notification Hubs ─► APNs
 
  Cross-cutting: Azure Communication Services (SMS OTP) · Azure OpenAI
  (question drafting) · Key Vault · App Configuration · App Insights/Monitor ·
@@ -65,21 +65,16 @@ Build a daily casual-forecasting app with private (friends) + global leaderboard
 
 ---
 
-## 3. Client architecture (native)
+## 3. Client architecture (native iOS)
 
 **iOS**
 - Swift, SwiftUI, async/await; MVVM.
 - Push: **APNs**. Contacts: **Contacts framework**. Social: **Sign in with Apple**
-  (AuthenticationServices). Token storage: **Keychain**. Anti-abuse: **App Attest / DeviceCheck**.
+  (AuthenticationServices) + **Google Sign-In**. Token storage: **Keychain**. Anti-abuse:
+  **App Attest / DeviceCheck**.
 - Phone normalization via libphonenumber (E.164). Universal Links for invites/deep links.
 
-**Android**
-- Kotlin, Jetpack Compose, Coroutines/Flow; MVVM.
-- Push: **FCM**. Contacts: **ContactsContract**. Social: **Google Sign-In / Credential Manager**.
-  Token storage: **Android Keystore + EncryptedSharedPreferences**. Anti-abuse: **Play Integrity**.
-- App Links for invites/deep links.
-
-**Shared client behaviors**
+**Client behaviors**
 - **Daily card:** 3 binary questions (Sports / Finance / Pop Culture); for each, tap a side (Yes/No,
   Win/Lose) **or tap Skip** (protects that category's streak), then lock in before the cutoff.
   Per-category **streak** badges are shown.
@@ -103,7 +98,7 @@ federated identities** (Apple, Google). Both a phone AND at least one social pro
    refresh token** (reuse detection, revocation list in Redis).
 3. **Recovery:** lost number → re-verify via linked Apple/Google; new number → re-verify OTP.
 
-**Hardening:** OTP rate-limits + throttling (Redis) gated by App Attest/Play Integrity; signing
+**Hardening:** OTP rate-limits + throttling (Redis) gated by App Attest/DeviceCheck; signing
 keys in **Key Vault**; per-device sessions; account-deletion + data-export endpoints (GDPR/CCPA).
 
 > Managed alternative if you later prefer not to own auth: **Microsoft Entra External ID** (CIAM)
@@ -225,7 +220,7 @@ Sorted Sets.
 ---
 
 ## 8. Push notifications
-- **Azure Notification Hubs** — single fan-out to **APNs + FCM**; device registration with **tags**
+- **Azure Notification Hubs** — single fan-out to **APNs**; device registration with **tags**
   (per-user, per-league, per-timezone).
 - **Notification types:** **global questions-live broadcast at `drop_at`** (same instant worldwide),
   **window-closing "streak at risk" reminder** before `locks_at` (answer or **Skip** to protect your
@@ -245,7 +240,7 @@ Sorted Sets.
   permanent progression board alongside the volatile streak boards (Friends + Global).
 - Integrity: every player answers the same global set within the same `drop_at` → `locks_at` 6-hour
   window; the server rejects anything after `locks_at` (server-authoritative clock); anti-abuse via
-  App Attest/Play Integrity + rate limits.
+  App Attest/DeviceCheck + rate limits.
 
 ---
 
@@ -287,7 +282,7 @@ Sorted Sets.
 | Leaderboards / cache | Azure Cache for Redis |
 | Media / share cards | Azure Blob Storage + Front Door/CDN |
 | SMS OTP | Azure Communication Services |
-| Push (APNs+FCM) | Azure Notification Hubs |
+| Push (APNs) | Azure Notification Hubs |
 | AI question drafting | Azure OpenAI |
 | Secrets / keys | Azure Key Vault |
 | Config / feature flags | Azure App Configuration |
@@ -309,8 +304,7 @@ Sorted Sets.
 6. **Social graph & contacts** — privacy-preserving match, friend requests, leagues.
 7. **Notifications** — Notification Hubs, global drop broadcast + window-closing reminders, notification types.
 8. **iOS app** — SwiftUI, APNs, Contacts, Sign in with Apple, Keychain.
-9. **Android app** — Compose, FCM, Contacts, Google Sign-In, Keystore.
-10. **Security & compliance hardening** — anti-abuse, rate limits, GDPR flows, observability, load test.
+9. **Security & compliance hardening** — anti-abuse, rate limits, GDPR flows, observability, load test.
 
 ---
 

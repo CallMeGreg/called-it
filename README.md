@@ -5,7 +5,7 @@ A daily casual-forecasting game. Three binary predictions a day — **Sports**, 
 per-category streaks, chase a permanent lifetime score, and climb friends + global leaderboards.
 
 This repository contains the **Azure-hosted backend** (fully implemented + tested), **Bicep IaC**,
-**GitHub Actions CI/CD**, and **mobile client scaffolds** (iOS + Android) built against a shared
+**GitHub Actions CI/CD**, and an **iOS client scaffold** built against a shared
 OpenAPI contract.
 
 ---
@@ -47,7 +47,6 @@ each have **Global** and **Friends** leaderboards.
 ```mermaid
 flowchart TB
     ios["iOS · SwiftUI"] -->|HTTPS REST/JSON| api
-    and["Android · Compose"] -->|HTTPS REST/JSON| api
 
     subgraph aca["Azure Container Apps"]
         api["CalledIt.Api<br/>(auth · daily set · guesses · leaderboards · contacts · admin)"]
@@ -59,7 +58,7 @@ flowchart TB
     api --> redis[("Azure Cache for Redis<br/>leaderboards")]
     wrk --> redis
     api --> acs["Azure Communication<br/>Services · SMS OTP"]
-    wrk --> nh["Azure Notification Hubs<br/>APNs + FCM push"]
+    wrk --> nh["Azure Notification Hubs<br/>APNs push"]
     api --> nh
     api --> blob[("Blob Storage<br/>share cards")]
 
@@ -85,12 +84,12 @@ cloud credentials). See [`docs/architecture.md`](docs/architecture.md) for the f
 | Leaderboards / cache | Azure Cache for Redis (sorted sets) |
 | AuthN | Phone + SMS OTP **and** Apple/Google id_token; app-issued JWT (rotating refresh) |
 | SMS | Azure Communication Services |
-| Push | Azure Notification Hubs (APNs + FCM) |
+| Push | Azure Notification Hubs (APNs) |
 | Secrets / config | Key Vault + App Configuration (via managed identity) |
 | Compute | Azure Container Apps |
 | IaC | Bicep (modular, resource-group scoped) |
 | CI/CD | GitHub Actions (build/test + OIDC deploy) |
-| Clients | iOS SwiftUI + Android Jetpack Compose (contract-first) |
+| Clients | iOS SwiftUI (contract-first) |
 
 ---
 
@@ -106,7 +105,7 @@ called-it/
     CalledIt.Workers/         # background jobs: daily-set builder, resolver, window-closing notifier
   tests/                      # Domain (unit) + Application & Api (integration) tests
   infra/                      # Bicep: main + 11 modules + dev/prod params  (see infra/README.md)
-  clients/                    # shared OpenAPI + iOS/Android scaffolds       (see clients/README.md)
+  clients/                  # shared OpenAPI + iOS scaffold               (see clients/README.md)
   docs/architecture.md        # full tech-stack & cloud-architecture spec
   .github/workflows/          # ci.yml (build/test + bicep) · deploy.yml (OIDC → ACR → Container Apps)
   Dockerfile · Dockerfile.workers
@@ -221,12 +220,12 @@ tracked in the repository's **manual-setup issue**.
 
 ---
 
-## Mobile clients
+## Mobile client (iOS)
 
-`clients/` holds a shared **OpenAPI contract** plus **SwiftUI (iOS)** and **Jetpack Compose (Android)**
-scaffolds wired for the real auth, today-card, and leaderboard flows. They are the clearly-scoped
-**next workstream** — a buildable starting point, not yet compiled apps (this environment has no
-Xcode / Android SDK). See [`clients/README.md`](clients/README.md).
+`clients/` holds a shared **OpenAPI contract** plus a **SwiftUI (iOS)** scaffold wired for the real
+auth, today-card, and leaderboard flows. It is the clearly-scoped **next workstream** — a buildable
+starting point, not yet a compiled app (this environment has no Xcode). See
+[`clients/README.md`](clients/README.md).
 
 ---
 
@@ -241,7 +240,7 @@ Xcode / Android SDK). See [`clients/README.md`](clients/README.md).
 | Background workers | ✅ Implemented |
 | Bicep IaC | ✅ Authored + validated |
 | CI/CD + Dockerfiles | ✅ Authored; CI green |
-| Mobile clients | 🚧 Scaffolded against OpenAPI (next workstream) |
+| iOS client | 🚧 Scaffolded against OpenAPI (next workstream) |
 | Live Azure deploy | ⏳ Needs the one-time manual setup (see the issue) |
 
 ## License

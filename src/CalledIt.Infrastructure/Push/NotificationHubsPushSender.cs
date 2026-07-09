@@ -6,7 +6,7 @@ namespace CalledIt.Infrastructure.Push;
 
 /// <summary>
 /// Fans out notifications through Azure Notification Hubs using template registrations, so a
-/// single call reaches both APNs and FCM. Devices register with a "messageParam"/"title"/"body"
+/// single call reaches iOS devices via APNs. Devices register with a "messageParam"/"title"/"body"
 /// template and per-user / "all" tags.
 /// </summary>
 public sealed class NotificationHubsPushSender : IPushSender
