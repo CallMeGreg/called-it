@@ -1,37 +1,22 @@
-# Called It — iOS (SwiftUI)
+# Legacy SwiftUI reference
 
-A SwiftUI client scaffold for **Called It**, targeting iOS 16+. This is a **starting point**, not a
-finished app: it shows the app entry point, a typed API client, Codable models mirroring
-[`../shared/openapi.yaml`](../shared/openapi.yaml), token/session handling, and the Today card
-screen. Compile it in Xcode after generating the full client and adding the platform integrations
-noted below.
+This is a small, unvalidated iOS scaffold targeting iOS 16+. It is **not the
+approved launch client**: the owner selected React Native/Expo native builds for
+both iOS and Android on 2026-10-07. Preserve this source as reference only.
 
-## Layout
+The scaffold contains a Today screen, hand-written DTOs and transport/session
+examples. It does not provide production social sign-in, Keychain storage,
+complete push registration, robust error handling or deadline reconciliation.
+Do not ship it or follow its old contact-pepper approach.
 
-```
-ios/
-  project.yml                     # XcodeGen project definition
-  CalledIt/Sources/CalledIt/
-    CalledItApp.swift             # @main app + root routing
-    APIClient.swift               # URLSession client, bearer auth, auto-refresh
-    Models.swift                  # Codable DTOs (mirror the OpenAPI schemas)
-    Session.swift                 # ObservableObject: tokens (Keychain) + auth calls
-    TodayView.swift               # the daily card UI (pick A / pick B / skip)
-```
-
-## Generate the project & open
+For optional local exploration, Xcode and XcodeGen are required:
 
 ```bash
-brew install xcodegen          # once
-cd clients/ios && xcodegen generate
+cd clients/ios
+xcodegen generate
 open CalledIt.xcodeproj
 ```
 
-## To make it a real app (next-workstream checklist)
-
-- [ ] Run `openapi-generator` (see `../README.md`) and replace the hand-written models/endpoints.
-- [ ] Add **Sign in with Apple** (`AuthenticationServices`) to obtain the `idToken` for `/api/auth/login`.
-- [ ] Register for **APNs**; POST the device token to `/api/auth/devices`.
-- [ ] Store tokens in the **Keychain** (the scaffold keeps them in memory for clarity).
-- [ ] Implement on-device contact hashing (HMAC-SHA256 + pepper) for `/api/contacts/match`.
-- [ ] Point `APIClient.baseURL` at your deployed API (or `http://localhost:5080` in the simulator).
+Generation is not a successful native build or App Store certification.
+See [the client direction](../README.md), [UX/UI](../../docs/ux-ui.md), and
+[delivery plan](../../docs/delivery-plan.md) for current requirements.

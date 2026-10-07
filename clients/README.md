@@ -1,70 +1,64 @@
-# Called It — iOS Client
+# Called It clients
 
-The native **iOS** client for **Called It**, built **contract-first** against
-[`shared/openapi.yaml`](./shared/openapi.yaml).
+**Approved launch direction:** one React Native/Expo application with native
+development and release builds for **iOS and Android**. The small SwiftUI scaffold
+in this branch is a legacy reference, not the shipping client or proof that either
+store integration works.
 
-> **Status: scaffold + contract, not yet a compiled app.** This environment has no Xcode, so the
-> app is provided as a **buildable starting point** — an accurate OpenAPI contract plus a SwiftUI
-> skeleton wired for the real auth, today-card, and leaderboard flows. It is the clearly-scoped
-> **next workstream**. The backend, IaC, and CI/CD in this repo are fully implemented and tested.
+See [UX/UI](../docs/ux-ui.md), [architecture](../docs/architecture.md), and the
+[native/store delivery gates](../docs/delivery-plan.md). Earlier unmerged Expo/local
+playground work is preserved separately; it is not imported or endorsed by this
+clean-baseline redesign.
 
-```
+## Current layout
+
+```text
 clients/
-  shared/openapi.yaml     # single source of truth for every endpoint + schema
-  ios/                    # SwiftUI app (XcodeGen project.yml + Sources)
+  shared/openapi.yaml   Existing prototype API contract
+  ios/                  Legacy SwiftUI scaffold
 ```
 
-## Contract-first: generate the typed client
+`shared/openapi.yaml` is useful baseline material, **not a verified complete
+contract**. Establish API-generated/drift-checked schemas and typed client generation
+before relying on it for the new client. Preserve mobile-version compatibility
+when receipt, idempotency, season and account-lifecycle endpoints are introduced.
 
-Rather than hand-maintaining models, generate them from the contract with
-[openapi-generator](https://openapi-generator.tech):
+## Cross-platform requirements
 
-```bash
-# iOS (URLSession + Codable)
-openapi-generator generate -i clients/shared/openapi.yaml \
-  -g swift5 -o clients/ios/Generated \
-  --additional-properties=responseAs=AsyncAwait,library=urlsession
-```
+Use native development builds rather than Expo Go for real Apple/Google sign-in,
+OS secure storage, attestation, APNs/FCM, associated domains and notifications.
+Choose a current compatible Expo/React Native toolchain at implementation time
+and verify both stores' SDK/upload requirements; do not pin a version based on
+an old prototype.
 
-The hand-written `APIClient` in the app shows the auth + call patterns; swap in the generated
-client when you wire up the real project.
+Implement typed API errors, single-flight refresh, secure session persistence,
+foreground reconciliation, explicit saved/draft receipts, monotonic countdown
+display anchored to server time, offline/late rejection, and accessibility.
+No token, OTP, provider private key, contact pepper or production credential in
+public Expo config, JS bundles, AsyncStorage, source, or screenshots.
 
-## Auth flow
+Accounts require **verified phone and a linked Apple/Google identity**. The SMS
+supplier must be selected; do not hardcode retiring ACS as the new architecture.
+Phone changes, linking and recovery require dedicated safe server flows.
 
-1. `POST /api/auth/otp` with the E.164 phone → user receives an SMS code.
-2. Native **Sign in with Apple** (or **Google Sign-In**) yields an `id_token`.
-3. `POST /api/auth/login` with `{ phoneE164, code, provider, idToken, platform, pushToken }`
-   → `AuthResult { accessToken, refreshToken, ... }`.
-4. Send `Authorization: Bearer <accessToken>` on every other call.
-5. On `401`, call `POST /api/auth/refresh` with the stored refresh token (tokens rotate — persist the
-   new pair). Store tokens in the **Keychain**.
+Register each installation through the authenticated backend. A SQL Device row
+alone does not register it with Notification Hubs. Respect preferences, quiet
+hours, TTL, token rotation and sign-out; notification receipt never grants a pick.
 
-## Push notifications
+## Contacts and privacy
 
-- Register for **APNs**, take the device token, `POST /api/auth/devices` with
-  `{ platform: "iOS", pushToken }`. The backend registers it with **Azure Notification Hubs**.
-- The daily "drop" and the "your set locks soon" reminder are delivered as pushes by the Workers
-  service via Notification Hubs (APNs).
+Do **not** distribute a shared HMAC pepper to clients or call enumerable phone
+hashes private. Mandatory phone verification does not grant Contacts permission.
+Invite links are the proposed v1 discovery mechanism; contact matching needs an
+explicit later decision, opt-in, threat model, abuse limits and retention policy.
 
-## Privacy-preserving contact discovery
+## Native release gates
 
-Raw phone numbers never leave the device. Each contact's **E.164** number is hashed on-device and
-only the hashes are sent to `POST /api/contacts/match`. The recipe **must** match the backend
-(`HmacPhoneHasher`) byte-for-byte:
+Both platforms need owned bundle/application IDs, provider clients/redirects,
+signing, native entitlements, device tests, privacy disclosures and store review.
+Deliver in-app account deletion and a public external deletion-request page for
+Google Play. Reviewer access must work outside the daily submission window without
+introducing a production ranking bypass.
 
-```
-hashedPhone = lowercase_hex( HMAC_SHA256( key = UTF8(pepper), message = UTF8(e164.trim()) ) )
-```
-
-- `pepper` is the shared `Contacts:Pepper` value, delivered to the app via secured configuration
-  (e.g. Azure App Configuration at first launch or an embedded build secret). Rotating it re-keys
-  discovery.
-- **Security note:** a peppered hash raises the bar over a plain unsalted hash, but because the phone
-  number space is small, anyone who extracts the pepper from a client can brute-force it. This is the
-  standard trade-off for hash-based contact discovery; a future hardening step is a **private set
-  intersection (PSI)** protocol so the pepper never ships to clients. Discovery is also gated by the
-  user's `DiscoverableByPhone` opt-in and server-side rate limiting.
-
-## Category codes
-
-`sports`, `finance`, `pop_culture` (display names come back on the today card as `categoryName`).
+A local playground is valuable for frozen-clock UX scenarios, but its data, admin
+controls and auth bypasses must be excluded from all release builds.
