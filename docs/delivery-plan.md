@@ -65,7 +65,7 @@ response if called, not silently use a development logger or return success.
 | D2 | UTC drop, window duration and event cutoff buffer | Test the six-hour hypothesis with the target cohort and actual event calendar. Do not inherit 17:00 UTC unquestioned. |
 | D3 | Final scoring/season/achievement rules | Approve Skip/miss/void behavior, newcomer eligibility, season boundaries, tied ranks, correction window and initial badge catalog before implementing versions. |
 | D4 | Contact discovery | Defer contact upload/matching; use invite links first. Mandatory phone verification need not imply discoverability. |
-| D5 | Phone-verification supplier | Evaluate managed challenge verification, social-flow binding, country support, anti-fraud, retention, accessibility/recovery and per-attempt pricing. No vendor account has been selected or verified. |
+| D5 | Identity/phone-verification supplier | Compare managed CIAM with managed verification plus app-owned sessions. Prove phone/social binding, phone evidence/uniqueness, re-verification cadence, country support, anti-fraud, recovery and pricing. See the sourced candidate comparison; no vendor is selected. |
 | D6 | Content/feed licenses and editorial owner | Choose dependable sports/finance/culture sources, fallback evidence and a human daily operator/backup. "API exists" is not a commercial license. |
 | D7 | Azure region/SKUs and actual estimate | Check the subscription's real constraints and quote within the USD 100-250 envelope, with headroom; accept measured availability trade-offs explicitly. |
 | D8 | Outage fairness and operational coverage | Approve objective void/replacement thresholds, escalation owner, support hours and recovery objectives. |

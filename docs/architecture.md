@@ -65,6 +65,16 @@ Keep domain calculations pure and infrastructure behind typed ports. Do not buil
 an abstract event platform, multiple databases, or an analytics lake before a
 working daily loop and operator workflow exist.
 
+### Alternatives considered
+
+| Choice | Why this direction / when to reconsider |
+| --- | --- |
+| SQL rather than a new document database | Identity ownership, rounds, accepted choices, social membership and transactional outbox work are naturally relational. A different store does not remove cross-record correctness requirements. |
+| Container Apps rather than rewriting all HTTP/work as Functions | Retains the small working .NET host and predictable warm API. Scheduled/event-driven jobs can follow once durable claims and catch-up exist. |
+| Shared native client rather than two independent apps | Owner-selected iteration speed and consistent behavior across stores; keep native integration and accessibility work explicit. |
+| SQL projections rather than Redis-first ranking | Avoids a second mandatory state system and its baseline cost. Reconsider after production-like query/peak-load evidence. |
+| Managed identity platform versus managed verification only | Still open. Entra External ID browser-delegated social login plus SMS MFA is a candidate; a verification-only vendor leaves linking, sessions and recovery with this app. Prove the full required flow before choosing. |
+
 ## Authoritative persistence
 
 Retain existing User, Question, DailySet, Guess, Streak and Score concepts, but
@@ -110,6 +120,12 @@ Document the database acceptance point precisely: queues and client send times
 do not establish eligibility. Exercise transactions that stall across the lock;
 select the SQL isolation/locking strategy based on those tests. Do not promise
 zero-boundary races from unit tests of `IsOpenAt` alone.
+
+The proposed acceptance point is the serialized, guarded database mutation, not
+HTTP response arrival. Acquire the necessary write concurrency rights before
+evaluating the authoritative cutoff; a timestamp captured before waiting on a
+lock is insufficient. A previously accepted receipt may arrive or be retried after
+lock, but an unaccepted queued command cannot claim that receipt.
 
 ## Durable scheduling and progression
 
@@ -158,8 +174,11 @@ verification port for challenge start/verification, strict provider token
 validation, unique identity ownership and explicit linking/recovery flows.
 Social token audience/issuer/subject/expiry/nonce are never optional in production.
 
-App-issued sessions need atomic refresh rotation, family replay revocation,
-per-device management and recent-authentication for destructive/account changes.
+If app-issued sessions are retained, they need atomic refresh rotation, family
+replay revocation, per-device management and recent-authentication for
+destructive/account changes. A managed CIAM alternative must prove equivalent
+required behavior, phone-verification evidence and account-link/recovery policy;
+do not confuse linked alternative logins with enforcing both requirements.
 Separate the operator identity plane from consumer phone bootstrap. See the
 [trust model](trust-and-safety.md) for controls and retention.
 

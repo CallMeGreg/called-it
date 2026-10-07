@@ -26,6 +26,27 @@ provider registration, policy restrictions, data residency, capacity response,
 and a current calculator estimate. Run read-only validation/what-if first; actual
 deployment requires owner approval and a resource/cost teardown plan.
 
+Historical context, **not a current capacity check**: a preserved 2026-10-07
+prototype experiment reported Container Apps environment creation in Central US
+failing with `ManagedEnvironmentCapacityHeavyUsageError` /
+`AKSCapacityHeavyUsage`. This is precisely why "listed as supported" is not a
+deployment guarantee. Do not import its resource IDs or switch regions
+automatically. Failed resource creations also need explicit inventory/cleanup;
+a list of successfully created resources can omit failed remnants.
+
+## Authentication candidates, not a vendor selection
+
+| Candidate and source | Verified capability | Proof still needed for this game |
+| --- | --- | --- |
+| [Entra External ID identity providers](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-authentication-methods-customers) and [MFA](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-multifactor-authentication-customers) | Apple/Google social federation is available through browser-delegated authentication. External-provider sign-in can use SMS as a paid MFA factor; SMS is not a first-factor sign-in method. | Verify the required phone evidence/uniqueness, identity linking, recovery, re-verification cadence, mobile UX, country availability, add-on pricing and subscription behavior. Do not assume the native-authentication SDK supports social login. |
+| [Twilio Verify](https://www.twilio.com/docs/verify/api) | A managed verification workflow with SMS and other channels, accessed by authenticated server APIs. | Validate country eligibility, fraud/attempt controls, privacy, price and outage handling. Verification alone does not own the game's social linking, session lifecycle or recovery. |
+| [Firebase account linking](https://firebase.google.com/docs/auth/android/account-linking) | Multiple credentials can link to one stable Firebase user, and a credential already owned elsewhere cannot simply be linked. | Linking permits sign-in with alternative providers; it is not proof that phone **and** social requirements are enforced together. Verify MFA/enrollment policy, native support, recovery and data-location/cost constraints. |
+
+The owner permits a non-Azure verification supplier; that does not rule out Entra
+External ID or approve any vendor. Prototype hardening must not lock in a custom
+authentication system by accident. Complete this bounded provider proof before
+building the full identity lifecycle or requesting production credentials.
+
 ## Stores and mobile release
 
 | Source | Observed constraint | Design consequence / owner action |
