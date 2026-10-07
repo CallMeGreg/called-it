@@ -25,7 +25,9 @@ RUN dotnet publish tools/TestDatabase/TestDatabase.csproj -c Release -o /migrati
 WORKDIR /src/tools/TestDatabase
 RUN dotnet tool restore \
     && dotnet tool run dotnet-ef -- migrations script --idempotent \
-        --project ../../src/CalledIt.Infrastructure --output /migration/migrations.sql \
+        --project ../../src/CalledIt.Infrastructure \
+        --startup-project ../../src/CalledIt.Infrastructure \
+        --configuration Release --no-build --output /migration/migrations.sql \
     && grep -q '20261007031337_AddIsolatedTestRounds' /migration/migrations.sql
 
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS migration
