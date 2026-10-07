@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Called It TEST",
+    "slug": "called-it-test",
+    "version": "0.1.0",
+    "platforms": ["ios", "android", "web"],
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-secure-store"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.callmegreg.calledit",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#142F32",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.callmegreg.calledit"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single",
+      "name": "Called It TEST",
+      "description": "Three calls. Two minutes. An invite-only, simulated prediction playground."
+    }
+  }
+}

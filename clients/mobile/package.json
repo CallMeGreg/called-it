@@ -1,0 +1,43 @@
+{
+  "name": "@called-it/mobile",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@expo/metro-runtime": "~57.0.16",
+    "expo": "~57.0.27",
+    "expo-network": "~57.0.2",
+    "expo-secure-store": "~57.0.4",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "^0.21.2",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.4",
+    "@types/react": "~19.2.2",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~57.0.2",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "export:web": "expo export --platform web --output-dir dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test": "node --import tsx --test tests/unit/*.test.ts",
+    "test:e2e": "playwright test",
+    "assets": "node scripts/generate-icons.mjs"
+  },
+  "engines": {
+    "node": "^22.13.0 || >=24.3.0"
+  },
+  "private": true
+}

@@ -1,70 +1,45 @@
-# Called It — iOS Client
+# Called It clients
 
-The native **iOS** client for **Called It**, built **contract-first** against
-[`shared/openapi.yaml`](./shared/openapi.yaml).
+**`mobile/` is the preferred client path:** one Expo / React Native TypeScript app for
+iOS, Android, and web. The first playable release is an invite-only **TEST** game,
+accessed through an Azure-hosted phone-browser link. Native distribution comes later.
 
-> **Status: scaffold + contract, not yet a compiled app.** This environment has no Xcode, so the
-> app is provided as a **buildable starting point** — an accurate OpenAPI contract plus a SwiftUI
-> skeleton wired for the real auth, today-card, and leaderboard flows. It is the clearly-scoped
-> **next workstream**. The backend, IaC, and CI/CD in this repo are fully implemented and tested.
-
-```
+```text
 clients/
-  shared/openapi.yaml     # single source of truth for every endpoint + schema
-  ios/                    # SwiftUI app (XcodeGen project.yml + Sources)
+  mobile/                 # Shared iOS, Android, and web client (preferred)
+  shared/openapi.yaml     # Backend API contract
+  ios/                    # Historical SwiftUI scaffold; not the active client
 ```
 
-## Contract-first: generate the typed client
+The shared client has three-category prediction cards, synchronized two-minute demo
+rounds, explicit simulated-outcome labeling, server-stored picks/skips/streaks, previous
+results, and global leaderboards. It calls `/api/test/login` and `/api/test/game`;
+those endpoints must not be enabled for normal production gameplay. It does not replace
+the production daily six-hour round rules.
 
-Rather than hand-maintaining models, generate them from the contract with
-[openapi-generator](https://openapi-generator.tech):
+## Shared client
+
+See [`mobile/README.md`](./mobile/README.md) for configuration, local development,
+session behavior, validation commands, and native rollout gates.
 
 ```bash
-# iOS (URLSession + Codable)
-openapi-generator generate -i clients/shared/openapi.yaml \
-  -g swift5 -o clients/ios/Generated \
-  --additional-properties=responseAs=AsyncAwait,library=urlsession
+cd clients/mobile
+npm ci
+npm run typecheck
+npm test
+npm run export:web
 ```
 
-The hand-written `APIClient` in the app shows the auth + call patterns; swap in the generated
-client when you wire up the real project.
+The static export is `clients/mobile/dist/`. The deployment build copies it to the
+ASP.NET application's `wwwroot`, so web API calls default to the same origin.
+`EXPO_PUBLIC_API_BASE_URL` is the only public application setting; native requires an
+explicit HTTPS API origin. Do not put invitation codes, signing keys, or credentials
+in public Expo configuration.
 
-## Auth flow
+## Historical native scaffold
 
-1. `POST /api/auth/otp` with the E.164 phone → user receives an SMS code.
-2. Native **Sign in with Apple** (or **Google Sign-In**) yields an `id_token`.
-3. `POST /api/auth/login` with `{ phoneE164, code, provider, idToken, platform, pushToken }`
-   → `AuthResult { accessToken, refreshToken, ... }`.
-4. Send `Authorization: Bearer <accessToken>` on every other call.
-5. On `401`, call `POST /api/auth/refresh` with the stored refresh token (tokens rotate — persist the
-   new pair). Store tokens in the **Keychain**.
-
-## Push notifications
-
-- Register for **APNs**, take the device token, `POST /api/auth/devices` with
-  `{ platform: "iOS", pushToken }`. The backend registers it with **Azure Notification Hubs**.
-- The daily "drop" and the "your set locks soon" reminder are delivered as pushes by the Workers
-  service via Notification Hubs (APNs).
-
-## Privacy-preserving contact discovery
-
-Raw phone numbers never leave the device. Each contact's **E.164** number is hashed on-device and
-only the hashes are sent to `POST /api/contacts/match`. The recipe **must** match the backend
-(`HmacPhoneHasher`) byte-for-byte:
-
-```
-hashedPhone = lowercase_hex( HMAC_SHA256( key = UTF8(pepper), message = UTF8(e164.trim()) ) )
-```
-
-- `pepper` is the shared `Contacts:Pepper` value, delivered to the app via secured configuration
-  (e.g. Azure App Configuration at first launch or an embedded build secret). Rotating it re-keys
-  discovery.
-- **Security note:** a peppered hash raises the bar over a plain unsalted hash, but because the phone
-  number space is small, anyone who extracts the pepper from a client can brute-force it. This is the
-  standard trade-off for hash-based contact discovery; a future hardening step is a **private set
-  intersection (PSI)** protocol so the pepper never ships to clients. Discovery is also gated by the
-  user's `DiscoverableByPhone` opt-in and server-side rate limiting.
-
-## Category codes
-
-`sports`, `finance`, `pop_culture` (display names come back on the today card as `categoryName`).
+`ios/` is retained unchanged as reference material, not as a compiled or store-ready app.
+Its earlier SMS/social authentication, contact discovery, and push sketches are not part
+of the new TEST client. Do not ship a shared contact-hashing pepper or any other secret
+inside either client. Native release work should continue in `mobile/`, with real
+authentication, privacy, account deletion, signing, and distribution reviewed first.

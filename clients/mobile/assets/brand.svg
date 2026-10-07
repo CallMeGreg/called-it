@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect id="background" width="1024" height="1024" fill="#142F32"/>
+  <g transform="rotate(-8 512 512)">
+    <rect id="tile" x="282" y="228" width="460" height="568" rx="134" fill="#D7F879"/>
+    <path id="stroke" d="M455 338H569L554 570H470Z" fill="#142F32"/>
+    <circle id="dot" cx="512" cy="661" r="55" fill="#142F32"/>
+  </g>
+</svg>
