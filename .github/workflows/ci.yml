@@ -49,6 +49,10 @@ jobs:
           cache-dependency-path: clients/mobile/package-lock.json
       - run: npm ci
       - run: npm run lint && npm run typecheck && npm test && npm run export:web
+      - name: Install phone-browser engines
+        run: npx playwright install --with-deps chromium webkit
+      - name: Chromium and WebKit phone flows
+        run: npm run test:e2e
 
   images:
     name: API, web, and migration images
