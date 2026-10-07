@@ -44,9 +44,26 @@ response if called, not silently use a development logger or return success.
 
 **Progress:** the backend guardrails/SQL-read slice is integrated. Production
 initialization is now read-only as well; the migrator/seed lifecycle remains an
-explicit gate. The Azure slice is still in progress. Neither slice implements
-the complete game, privacy flows or native client. See the
+explicit gate. The lean Azure/bootstrap/application-deployment slice is also
+integrated, with local-only defaults and no actual cloud deployment. Neither slice
+implements the complete game, privacy flows or native client. See the
 [implementation evidence](README.md#first-implementation-progress).
+
+### Next implementation sequence
+
+First ratify D1-D4 and D8; these determine eligibility, content timing and the
+competition state machine. Then implement phase 1 with a **real SQL Server test
+lane and reviewed migrator/category-seed command** as prerequisites, followed by
+publication/atomic choice receipts, durable outbox/claims and ordered progression.
+This closes the correctness gap instead of merely making more screens interactive.
+
+In parallel with that bounded work, the owner can prove the D5 identity-provider
+flow and D6 content rights, and commission the Expo UX prototype from the agreed
+state specification. Do not deploy the foundation simply to unblock UI design;
+a local frozen-clock practice mode can exercise UX without Azure spend.
+
+No actual regional beta until networking, database grants/restore, vendor-backed
+identity/privacy, native builds and the other release gates below are satisfied.
 
 ### Acceptance matrix for subsequent work
 

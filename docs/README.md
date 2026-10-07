@@ -56,15 +56,26 @@ Use the delivery plan as the release checklist. Preserve the distinction between
 | Slice | Current state |
 | --- | --- |
 | Backend guardrails | Integrated: both hosts reject unsafe deployed configuration; identity ownership and OIDC validation tightened; SQL projections replace Redis/in-memory standings; production startup is read-only; live/ready endpoints added. |
-| Azure foundation | Implementation in progress in an isolated workstream; deployment is not authorized. |
+| Azure foundation | Integrated: foundation-only Bicep, separate immutable application rollout, versioned secret references, API-only health/scaling, and opt-in deployment phases. Default/manual-plan/push paths perform local validation only. No Azure resources were created. |
 | Competition, native client and public launch | Still gated. The complete timing/outbox/scoring protocol, vendor-backed identity lifecycle, deletion/moderation, notifications and store builds are not delivered by the guardrails slice. |
 
-The integrated backend passes the full solution build and 156 local tests
-(20 domain, 111 application, 25 API). Successful database tests use SQLite, **not
+The integrated backend passes the full solution build and 158 local tests
+(20 domain, 112 application, 26 API). Successful database tests use SQLite, **not
 SQL Server**; no production query-plan/load/concurrency, managed-identity,
 least-privilege, migration/seed, cloud capacity or native-device result is implied.
+
+Infrastructure verification compiles the foundation, both parameter files and
+application template with explicit non-secret fixtures. Its 42 local tests and
+workflow lint pass. Azure, Docker and deployed-health execution paths in those
+tests are mocked: no provider/CLI deployment compatibility, actual image build,
+region/SKU availability or cost result is established. The default SQL firewall
+is closed and the vault is empty; networking, schema/bootstrap and secret
+population are deliberate prerequisites, not completed deployment tasks.
 
 Deployed SMS and push default to **Disabled**, returning explicit unavailability
 when invoked. All three legacy scheduled workers and stub resolution are rejected
 outside Development. This is intentionally a safe foundation, not a playable
 public service with development adapters hidden behind production configuration.
+
+This completes the initial **planning and first-foundation slices**, not the game.
+The next executable milestones and owner decisions remain in the delivery plan.

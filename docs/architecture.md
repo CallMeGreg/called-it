@@ -226,6 +226,21 @@ timeout and generic 503 failures; it never exposes connection details in the
 response. Non-Development startup uses the same read-only prerequisite checks.
 There is still no separately delivered production migrator/seed command.
 
+The integrated IaC mirrors the runtime's safe defaults. `infra/main.bicep` owns
+only the lean foundation; `infra/application.bicep` deploys explicit digest-pinned
+API/worker images after independent schema/network/secret gates. GitHub Actions
+pushes and the default manual phase validate locally, without Azure login or
+resource mutation. App application requires a fresh revision suffix, complete
+runtime configuration and versioned Key Vault references. The worker has no HTTP
+probe and no enabled scheduled jobs in deployed defaults.
+
+The beta foundation is intentionally not private-network-ready or deployable as a
+working game: SQL starts with no firewall entries, Key Vault is empty, all runtime
+SQL users/schema/seeds are external prerequisites, and no verification supplier
+is configured. It does not provision Redis, ACS, App Configuration, Storage or a
+Notification Hub. See the exact [resource/rollout contract](../infra/README.md)
+rather than inferring readiness from this target architecture.
+
 Defer microservices, Service Bus, Event Grid, Redis, AI question generation and
 multi-region writes. Introduce them only with an observed bottleneck or operational
 requirement and a migration/recovery plan. At this scale, correct transactions,

@@ -91,6 +91,13 @@ Read [infra/README.md](infra/README.md) before any Azure action. Compilation is 
 a deployment, subscription/SKU availability check, restore exercise or cost quote.
 No cloud provisioning or store publication is authorized by this plan.
 
+The integrated IaC now separates foundation provisioning, image publication and
+application rollout. Defaults and pushes only validate locally; deploying apps
+requires explicit image digests, versioned secrets, approvals and database/network
+prerequisites. Redis, ACS, App Configuration and Storage are no longer provisioned
+by default. Optional push integrates an existing configured hub, not an automatic
+new resource.
+
 Read [clients/README.md](clients/README.md) for the cross-platform direction.
 The checked-in SwiftUI scaffold has no production sign-in, secure token storage
 or complete notifications. Do not follow the old client-pepper/contact-hashing

@@ -59,6 +59,21 @@ It is not a proof that every endpoint works, that the migrator is implemented,
 that runtime write grants are correct, or that SQL Server load/concurrency has
 been validated. The remaining P0 release gates above still block public beta.
 
+### Disposition after the first infrastructure slice
+
+Foundation convergence no longer contains application resources or placeholder
+images. App rollout is separate, requires immutable image digests and versioned
+same-vault secret references, verifies the requested revision names plus API
+live/ready responses, and does not claim success on failure. Default workflows
+do not log into Azure; paid actions require explicit protected-environment gates.
+
+Deferred services and the allow-all-Azure SQL firewall rule are absent from the
+new templates. This does **not** revoke a pre-existing firewall rule or remove old
+resources under incremental deployment. The current foundation supplies no
+private/stable-egress network, runtime SQL user, migrator or populated secrets;
+the documented manual gates intentionally prevent a usable rollout until these
+are addressed. Local mocked execution is not an Azure deployment/security result.
+
 ## Required identity design
 
 Use an opaque immutable user ID. A phone is a replaceable, verified credential,
