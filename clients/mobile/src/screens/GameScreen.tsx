@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import type { ApiClient, GameSnapshot, SessionSnapshot } from '../api/client';
-import { categoryCodes, type AuthResult, type BoardFilter, type Question, type Side } from '../api/contracts';
+import type { GameClient, GameSnapshot } from '../api/game-client';
+import { categoryCodes, type BoardFilter, type Question, type Side } from '../api/contracts';
 import { CancelledRequest, ClientError, describeError } from '../api/errors';
 import { formatCountdown, secondsRemaining } from '../game/rounds';
 import { useResource } from '../hooks/useResource';
@@ -17,14 +17,18 @@ import { Stats } from './Stats';
 type Tab = 'Play' | 'Results' | 'Boards' | 'You';
 const tabs: Tab[] = ['Play', 'Results', 'Boards', 'You'];
 
-export function GameScreen({ client, auth, session, foreground, online, connectivityNotice }: {
-  client: ApiClient;
-  auth: AuthResult;
-  session: SessionSnapshot;
+export function GameScreen({ client, displayName, storageWarning, onSignOut, foreground, online, connectivityNotice, mode = 'api', controls }: {
+  client: GameClient;
+  displayName: string;
+  storageWarning?: string | null;
+  onSignOut?: () => void;
   foreground: boolean;
   online: boolean;
   connectivityNotice: string | null;
+  mode?: 'api' | 'playground';
+  controls?: ReactNode;
 }) {
+  const local = mode === 'playground';
   const [tab, setTab] = useState<Tab>('Play');
   const [filter, setFilter] = useState<BoardFilter>({ type: 'TotalScore' });
   const [now, setNow] = useState(() => performance.now());
@@ -44,9 +48,18 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
   const needsConfirmation = unconfirmedSnapshot !== null && unconfirmedSnapshot === gameResource.data;
   const loadBoard = useCallback((signal: AbortSignal) => client.leaderboard(filter, signal), [client, filter]);
   const boardResource = useResource(loadBoard, enabled && tab === 'Boards', 20_000);
+  const refreshBoard = boardResource.refresh;
   const game = gameResource.data?.game;
   const round = game?.currentRound;
   const remaining = round && gameResource.data ? secondsRemaining(round, gameResource.data.clock, now) : 0;
+
+  useEffect(() => {
+    if (!enabled || !client.subscribeGame) return;
+    return client.subscribeGame(() => {
+      void refreshGame();
+      if (tab === 'Boards') void refreshBoard();
+    });
+  }, [client, enabled, tab, refreshGame, refreshBoard]);
 
   useEffect(() => {
     mounted.current = true;
@@ -96,7 +109,7 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
       const result = await gameResource.refresh();
       if (!mounted.current) return;
       if (!result.ok) {
-        setSubmissionMessage('The server accepted your call, but the latest view could not be loaded. Refresh to confirm its saved state.');
+        setSubmissionMessage(local ? 'The local call was saved, but its latest view could not be loaded. Refresh to confirm.' : 'The server accepted your call, but the latest view could not be loaded. Refresh to confirm its saved state.');
       } else if (result.data.game.currentRound?.id !== round.id) {
         setSubmissionMessage('Your call was accepted as the round ended. Check Results for the latest completed round.');
       }
@@ -104,7 +117,7 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
       if (!mounted.current || cause instanceof CancelledRequest) return;
       if (cause instanceof ClientError && cause.isSubmissionLocked) {
         setLockedRound(round.id);
-        setSubmissionMessage('The server locked that round before your call arrived. It was not saved. Refreshing the round...');
+        setSubmissionMessage(local ? 'This local round is locked. Your new call was not saved. Refreshing the round...' : 'The server locked that round before your call arrived. It was not saved. Refreshing the round...');
         await gameResource.refresh();
       } else if (cause instanceof ClientError && cause.status === 409) {
         setSubmissionMessage(`${cause.message} Refreshing the server state.`);
@@ -133,7 +146,7 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
     <View style={layout.flex}>
       <View style={styles.header}>
         <View style={styles.headerInner}>
-          <Brand light />
+          <Brand light local={local} />
           <Button
             label={gameResource.busy ? 'Syncing' : 'Refresh'}
             variant="dark"
@@ -142,7 +155,7 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
             disabled={!enabled || !!pending}
           />
         </View>
-        <Text style={styles.headerCaption}>THE TWO-MINUTE PLAYGROUND</Text>
+        <Text style={styles.headerCaption}>{local ? 'LOCAL PLAYGROUND / NO BACKEND' : 'THE TWO-MINUTE PLAYGROUND'}</Text>
       </View>
 
       <ScrollView
@@ -151,9 +164,10 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
         contentContainerStyle={layout.content}
         keyboardShouldPersistTaps="handled"
       >
+        {controls}
         {!online && <Notice title="You're offline. Calls are paused." tone="warning">Showing the last server-confirmed state. Nothing will be queued or submitted in the background. Reconnect to refresh.</Notice>}
         {connectivityNotice && <Notice title="Connection status" tone="warning">{connectivityNotice}</Notice>}
-        {session.storageWarning && <Notice title="Temporary session" tone="warning">{session.storageWarning}</Notice>}
+        {storageWarning && <Notice title="Temporary session" tone="warning">{storageWarning}</Notice>}
         {gameResource.error && (
           <Notice title="Live updates paused" tone="error" action="Retry game" onAction={() => { void refresh(); }} disabled={!enabled || !!pending}>
             {gameResource.error.message} {game ? 'The calls and scores below are from your last successful refresh.' : ''}
@@ -164,7 +178,7 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
             {submissionMessage}
           </Notice>
         )}
-        {!game && gameResource.busy && <Loading label="Getting your shared round..." />}
+        {!game && gameResource.busy && <Loading label={local ? 'Loading your local round...' : 'Getting your shared round...'} />}
         {!game && !gameResource.busy && !gameResource.error && !online && (
           <Notice title="No round loaded yet">Your game will load when you&apos;re back online.</Notice>
         )}
@@ -172,9 +186,9 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
         {tab === 'Play' && game && (
           <>
             <View style={styles.hero}>
-              <Badge dark>Simulated demo</Badge>
+              <Badge dark>{local ? 'Local simulated demo' : 'Simulated demo'}</Badge>
               <Text accessibilityRole="header" style={styles.heroTitle}>Make your call.</Text>
-              <Text style={styles.heroBody}>Sample questions. Simulated outcomes.{'\n'}Your picks and streaks are the real thing.</Text>
+              <Text style={styles.heroBody}>{local ? 'Sample questions. You choose the outcomes.\nPicks and scores stay in this browser only.' : 'Sample questions. Simulated outcomes.\nYour picks and streaks are the real thing.'}</Text>
               {round ? (
                 <>
                   <View style={styles.timerRow}>
@@ -192,7 +206,9 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
                     <View style={[styles.progress, { width: `${Math.min(100, remaining / 120 * 100)}%` }]} />
                   </View>
                   <Text style={styles.timerNote}>
-                    {remaining > 0 && round.isOpen ? 'Shared round. Server-synced clock. Change a call until lock.' : 'Fetching the next shared round. Last-round calls are locked.'}
+                    {local
+                      ? (round.isOpen ? 'Manual local clock. Use Fast forward or Lock round in local controls.' : 'Calls are locked. Choose outcomes in local controls, then publish to start the next round.')
+                      : (remaining > 0 && round.isOpen ? 'Shared round. Server-synced clock. Change a call until lock.' : 'Fetching the next shared round. Last-round calls are locked.')}
                   </Text>
                 </>
               ) : <Text style={styles.heroBody}>The next shared round is being prepared. Stay here or use Refresh.</Text>}
@@ -207,6 +223,7 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
               return <QuestionCard
                 key={question.questionId}
                 question={question}
+                local={local}
                 stats={game.stats.categories.find((item) => item.categoryCode === category)}
                 disabled={controlsDisabled}
                 busy={pending === question.questionId}
@@ -217,7 +234,7 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
           </>
         )}
 
-        {tab === 'Results' && game && <Results round={game.previousRound} />}
+        {tab === 'Results' && game && <Results round={game.previousRound} local={local} />}
         {tab === 'Boards' && (
           <Standings
             filter={filter}
@@ -227,14 +244,15 @@ export function GameScreen({ client, auth, session, foreground, online, connecti
             error={boardResource.error}
             onRetry={() => { void boardResource.refresh(); }}
             online={online}
+            local={local}
           />
         )}
         {tab === 'You' && (game
-          ? <Stats stats={game.stats} displayName={auth.displayName} onSignOut={() => { void client.signOut(); }} />
+          ? <Stats stats={game.stats} displayName={displayName} onSignOut={onSignOut} local={local} />
           : <View style={layout.panel}>
-            <Text accessibilityRole="header" style={layout.subtitle}>{auth.displayName}</Text>
-            <Text style={layout.muted}>Your stats will appear after a successful game refresh. You can still sign out now.</Text>
-            <Button label="Sign out" variant="secondary" onPress={() => { void client.signOut(); }} />
+            <Text accessibilityRole="header" style={layout.subtitle}>{displayName}</Text>
+            <Text style={layout.muted}>Your stats will appear after a successful game refresh.</Text>
+            {onSignOut && <Button label="Sign out" variant="secondary" onPress={onSignOut} />}
           </View>)}
       </ScrollView>
 

@@ -14,16 +14,16 @@ const resultCopy: Record<ResultStatus, string> = {
   Pending: 'The server is still resolving this sample question.',
 };
 
-export function Results({ round }: { round: Round | null }) {
+export function Results({ round, local = false }: { round: Round | null; local?: boolean }) {
   return (
     <View style={layout.stack}>
       <View style={{ gap: 8 }}>
         <Text style={layout.eyebrow}>THE LAST WORD</Text>
         <Text accessibilityRole="header" style={layout.title}>How&apos;d you call it?</Text>
-        <Text style={layout.muted}>Your most recent completed shared round. All outcomes below are simulated.</Text>
+        <Text style={layout.muted}>{local ? 'Your most recently published local round. All outcomes below were chosen in local controls.' : 'Your most recent completed shared round. All outcomes below are simulated.'}</Text>
       </View>
       {!round ? (
-        <Notice title="No results yet">Once a shared round ends, your calls and its simulated outcomes appear here. Pick a side or Skip in Play while the timer is running.</Notice>
+        <Notice title="No results yet">{local ? 'Make your calls in Play, lock the round, and publish chosen outcomes in local controls. No waiting or backend is required.' : 'Once a shared round ends, your calls and its simulated outcomes appear here. Pick a side or Skip in Play while the timer is running.'}</Notice>
       ) : (
         <>
           <View style={[layout.panel, styles.summary]}>

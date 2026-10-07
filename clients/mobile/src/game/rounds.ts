@@ -3,6 +3,7 @@ import type { Question, Round } from '../api/contracts';
 export interface ServerClock {
   serverAtSyncMs: number;
   monotonicAtSyncMs: number;
+  rate?: 0 | 1;
 }
 
 export function synchronizeClock(
@@ -18,7 +19,7 @@ export function synchronizeClock(
 }
 
 export function secondsRemaining(round: Round, clock: ServerClock, monotonicNowMs: number) {
-  const elapsed = Math.max(0, monotonicNowMs - clock.monotonicAtSyncMs);
+  const elapsed = Math.max(0, monotonicNowMs - clock.monotonicAtSyncMs) * (clock.rate ?? 1);
   return Math.max(0, Math.ceil((Date.parse(round.locksAtUtc) - clock.serverAtSyncMs - elapsed) / 1000));
 }
 

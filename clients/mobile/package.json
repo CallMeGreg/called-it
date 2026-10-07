@@ -29,11 +29,13 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "playground": "node scripts/playground.mjs",
     "export:web": "expo export --platform web --output-dir dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "test": "node --import tsx --test tests/unit/*.test.ts",
     "test:e2e": "playwright test",
+    "test:playground": "playwright test --config playwright.playground.config.ts",
     "assets": "node scripts/generate-icons.mjs"
   },
   "engines": {

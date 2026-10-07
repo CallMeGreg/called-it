@@ -13,7 +13,7 @@ const filterNames: Record<BoardType, string> = {
 };
 const categoryNames = { sports: 'Sports', finance: 'Finance', pop_culture: 'Pop Culture' };
 
-export function Standings({ filter, onFilter, data, busy, error, onRetry, online }: {
+export function Standings({ filter, onFilter, data, busy, error, onRetry, online, local = false }: {
   filter: BoardFilter;
   onFilter: (filter: BoardFilter) => void;
   data: Leaderboard | null;
@@ -21,6 +21,7 @@ export function Standings({ filter, onFilter, data, busy, error, onRetry, online
   error: ClientError | null;
   onRetry: () => void;
   online: boolean;
+  local?: boolean;
 }) {
   const matchingData = data?.type === filter.type
     && data.categoryCode === ('category' in filter ? filter.category : null) ? data : null;
@@ -29,7 +30,7 @@ export function Standings({ filter, onFilter, data, busy, error, onRetry, online
       <View style={{ gap: 8 }}>
         <Text style={layout.eyebrow}>A LITTLE FRIENDLY COMPETITION</Text>
         <Text accessibilityRole="header" style={layout.title}>The bragging board.</Text>
-        <Text style={layout.muted}>Global TEST rankings. Real stored points from simulated rounds.</Text>
+        <Text style={layout.muted}>{local ? 'Local-only demo board. Your simulated score updates when you publish outcomes; there are no live competitors.' : 'Global TEST rankings. Real stored points from simulated rounds.'}</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters} accessibilityLabel="Leaderboard metric filters">
         {boardTypes.map((type) => (
@@ -61,7 +62,7 @@ export function Standings({ filter, onFilter, data, busy, error, onRetry, online
           {matchingData.rows.length === 0
             ? <View style={{ padding: 20 }}><Text style={layout.body}>Room at the top.</Text><Text style={layout.muted}>No rankings yet. Completed rounds will put players on this board.</Text></View>
             : matchingData.rows.map((row) => (
-              <View key={row.userId} style={[styles.row, row.isMe && styles.me]} accessibilityLabel={`Rank ${row.rank}, ${row.displayName}${row.isMe ? ', you' : ''}, ${row.score} ${filter.type === 'TotalScore' ? 'points' : 'streak'}`}>
+              <View key={row.userId} testID={row.isMe ? 'leaderboard-me' : undefined} style={[styles.row, row.isMe && styles.me]} accessibilityLabel={`Rank ${row.rank}, ${row.displayName}${row.isMe ? ', you' : ''}, ${row.score} ${filter.type === 'TotalScore' ? 'points' : 'streak'}`}>
                 <Text style={styles.rank}>{row.rank.toString().padStart(2, '0')}</Text>
                 <View style={styles.player}>
                   <Text style={styles.name}>{row.displayName}</Text>

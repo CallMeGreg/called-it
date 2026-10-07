@@ -85,6 +85,14 @@ async function login(page: Page, name = 'Avery') {
   return invite;
 }
 
+test('ordinary production web cannot enable local controls through a URL query or a local save', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('called_it_local_playground_v1', '{"not":"a real session"}'));
+  await page.goto('/?playground=1');
+  await expect(page.getByRole('button', { name: 'Join the demo', exact: true })).toBeVisible();
+  await expect(page.getByTestId('local-controls')).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('called_it_local_playground_v1'))).toBe('{"not":"a real session"}');
+});
+
 test('phone flow saves only acknowledged calls, persists tab session, filters boards, and isolates logout', async ({ page }, testInfo) => {
   const api = await mockApi(page);
   await page.goto('/');

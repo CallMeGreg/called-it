@@ -10,16 +10,18 @@ interface ButtonProps {
   disabled?: boolean;
   busy?: boolean;
   hint?: string;
+  expanded?: boolean;
 }
 
-export function Button({ label, onPress, variant = 'primary', disabled = false, busy = false, hint }: ButtonProps) {
+export function Button({ label, onPress, variant = 'primary', disabled = false, busy = false, hint, expanded }: ButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={hint}
-      accessibilityState={{ disabled: disabled || busy, busy }}
+      accessibilityState={{ disabled: disabled || busy, busy, expanded }}
       aria-busy={busy}
+      aria-expanded={expanded}
       disabled={disabled || busy}
       onPress={onPress}
       style={({ pressed }) => [
@@ -68,12 +70,12 @@ export function Badge({ children, dark = false }: { children: ReactNode; dark?: 
   );
 }
 
-export function Brand({ light = false }: { light?: boolean }) {
+export function Brand({ light = false, local = false }: { light?: boolean; local?: boolean }) {
   return (
-    <View style={layout.row} accessibilityLabel="Called It TEST">
+    <View style={layout.row} accessibilityLabel={local ? 'Called It LOCAL PLAYGROUND' : 'Called It TEST'}>
       <View style={styles.logoMark}><Text style={styles.logoText}>!</Text></View>
       <Text style={[styles.brand, light && { color: colors.surface }]}>called it.</Text>
-      <Text style={[styles.test, light && { color: colors.lime, borderColor: '#56734C' }]}>TEST</Text>
+      <Text style={[styles.test, light && { color: colors.lime, borderColor: '#56734C' }]}>{local ? 'LOCAL' : 'TEST'}</Text>
     </View>
   );
 }

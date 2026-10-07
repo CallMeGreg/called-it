@@ -1,15 +1,70 @@
-# Called It TEST - shared client
+# Called It - local playground and shared client
 
 A phone-first Expo / React Native client for **iOS, Android, and web**, scaffolded with
 `create-expo-app`'s current `blank-typescript` template. SDK 57, React Native 0.86, and
 React 19 packages are pinned by `package-lock.json`; native/web packages were selected
 with `expo install`. TypeScript is strict.
 
-The first playable distribution is the Azure-hosted **web** build. Native-compatible
-components and token storage are implemented; a working web export is **not evidence
-of an Xcode/Gradle build, device validation, or App Store/Google Play readiness**.
+The current experience is a **local-only web playground**: no backend, Azure resources,
+invites, service configuration, or real authentication are needed. The API-connected
+client remains available and is still the default for ordinary commands/builds.
 
-## Playable scope
+## Run the local playground
+
+From the repository root, with Node 24.3+ (or Node 22.13+):
+
+```bash
+cd clients/mobile
+npm ci
+npm run playground
+```
+
+Open **http://127.0.0.1:43819**. The command builds development web files into ignored
+`.playground-dist/`, then binds a static server to **loopback only**, not your LAN. Use
+`npm run playground -- --port 43820` if the default port is occupied. Stop with Ctrl+C.
+This is not a hot-reload server; rerun the command after changing source code.
+
+Play starts immediately as **Demo player**, using the same Play / Results / Boards / You
+screens as the API client. Open **Show local controls** above the game:
+
+| Control | Effect |
+| --- | --- |
+| Fast forward +30s | Advances the manual clock by 30 seconds, stopping at round lock. |
+| Lock round | Jumps straight to the cutoff. Saved picks stay visible; new picks return the same 423 lock error as API mode. |
+| Side A / Side B / Void | Stages each category's outcome independently. The player-facing round remains `Unresolved` until publication. |
+| Publish outcomes | Requires a locked round and three chosen outcomes. Scores it once, updates Results/streaks/Boards, and opens the next 2:00 round. Published outcomes cannot be changed. |
+| Reset demo | Asks for **Reset demo now** confirmation before replacing only the local demo's picks, outcomes, scores, and clock. Cancel leaves them intact. |
+
+Time is deliberately **frozen between admin actions**, including while backgrounded or
+closed. No real-time two-minute wait is required. Correct calls add one point and grow
+the category streak; wrong/missed resets that streak; skip/void preserves it. Boards
+contain this one clearly local demo player, not fabricated live competitors.
+
+### Local data and safety boundary
+
+The playground saves versioned state under **`called_it_local_playground_v1` in
+`localStorage`** for this loopback origin/port. Reloading or restarting on the same origin
+restores its clock, picks, draft outcomes, previous results, and scores. Changing ports
+or browsers creates a separate local save. Corrupt/blocked storage is visible; failed
+writes leave the previous state unchanged rather than pretending a pick/reset succeeded.
+A stale tab must reload the saved demo instead of overwriting another tab's changes.
+
+The adapter uses no tokens, JWTs, invite codes, `fetch`, or backend endpoints. It does not
+read, write, or clear the real client's `sessionStorage`/SecureStore session. The launcher
+sets a reserved `EXPO_PUBLIC_LOCAL_PLAYGROUND=1` switch **only in its child development
+build**, ignores API configuration, and sends a `connect-src 'none'` policy as defense
+in depth. Its Metro configuration omits Expo's HMR/message-socket network bootstraps
+only for this static playground build; normal Metro configuration is unchanged.
+Do not set that switch manually or deploy `.playground-dist/`.
+
+Local controls require **all three** of explicit opt-in, a web development build, and a
+literal loopback host. Native, remote-host, and release builds reject the opt-in; URL
+query parameters cannot enable it. Ordinary `npm run web`, native commands, and
+`npm run export:web` remain API-connected by default. Release Metro builds exclude the
+local adapter/admin module. The playground is an experience mock, not a production
+administration or authentication feature.
+
+## API-connected mode (preserved)
 
 - Invite-only TEST login with a public display name and privately issued invite code.
   No real SMS/social login, payments, odds, prizes, or local fake accounts.
@@ -24,7 +79,9 @@ of an Xcode/Gradle build, device validation, or App Store/Google Play readiness*
 
 Correct adds one point and grows its category streak. Wrong/missed resets that category's
 streak. Skip/void preserves it without points. The server remains authoritative.
-Normal production's daily six-hour gameplay is unchanged; this client targets TEST only.
+Normal production's daily six-hour gameplay is unchanged; the API client targets TEST.
+Native-compatible components and token storage are implemented, but web exports do
+**not** prove Xcode/Gradle builds, device behavior, or store readiness.
 
 ## Setup and commands
 
@@ -39,10 +96,10 @@ npm test
 npm run export:web
 ```
 
-`export:web` generates a static single-page site in **`dist/`**. The shared deployment
-Docker build copies its contents to ASP.NET `wwwroot`; web and API share one HTTPS
-origin. Navigation is in-app, without server-side rendering, a Node web service, or a
-service worker. `dist/`, local environment files, generated native projects, and test
+`export:web` generates the API-connected static single-page site in **`dist/`**, which
+can be served from ASP.NET `wwwroot` on the API's origin. It does not deploy anything.
+Navigation is in-app, without server-side rendering or a service worker.
+`dist/`, local environment files, generated native projects, and test
 artifacts are ignored.
 
 ```bash
@@ -55,14 +112,15 @@ The native commands need the relevant local tooling/device and a compatible Expo
 development build. They do not create an EAS account, EAS project, signing credentials,
 or an app-store release.
 
-## Public configuration
+## API mode public configuration
 
-**Only `EXPO_PUBLIC_API_BASE_URL` is public application configuration.** It is bundled
-into client JavaScript at build time, not a secret or a runtime Azure setting.
+**`EXPO_PUBLIC_API_BASE_URL` is the only API configuration setting.** It is bundled into
+client JavaScript at build time, not a secret. The reserved playground switch above is
+managed by its dedicated launcher, not needed for API mode.
 
 | Target | Configuration |
 | --- | --- |
-| Azure web | Leave unset/empty; requests use relative `/api/...` paths on the page's origin. |
+| Same-origin web | Leave unset/empty; requests use relative `/api/...` paths on the page's origin. |
 | Native | Set to the deployed **HTTPS origin**, e.g. `https://<your-test-api-host>`. Missing/invalid configuration is a visible blocking error. |
 | Separate-origin web | Set to an HTTPS API origin and explicitly allow the web origin in the API's CORS configuration. |
 | Local web development | Explicitly set an API origin as shown below and allow Metro's origin in the API. No localhost API default is embedded. |
@@ -87,7 +145,7 @@ Never put invite codes, test credentials, tokens, signing material, or cloud sec
 `app.json`, any `EXPO_PUBLIC_*` value, tracked `.env` files, or the static export.
 Invite issuance and revocation belong to the server/operator.
 
-## Session and request behavior
+## API session and request behavior
 
 - Native sessions use `expo-secure-store`, with device-only Keychain accessibility on
   iOS and Expo's secure Android storage/backup configuration. Native storage failure
@@ -134,15 +192,18 @@ The typed, runtime-validated contract is in `src/api/contracts.ts`, aligned with
 
 `npm test` runs isolated Node/TypeScript tests for API errors, concurrent/rotated
 refresh, persistence and account races, configuration, storage failures, server-clock
-countdowns, and result precedence.
+countdowns, result precedence, and the actual local engine's time/lock/scoring/void/skip/
+idempotency/reset/persistence/mode boundaries.
 
-Browser coverage runs the **exported production web files**, with mock API data kept
-exclusively under `tests/`. No mock accounts or scores are included in the app bundle:
+API browser coverage runs the **exported production web files**, with API fixtures kept
+exclusively under `tests/`. The normal production bundle contains neither those fixtures
+nor the local playground implementation:
 
 ```bash
 npm run export:web
 npx playwright install chromium webkit   # only needed when these browsers are not installed
 npm run test:e2e
+npm run test:playground
 ```
 
 Playwright starts a loopback-only static test server at `http://127.0.0.1:43817`.
@@ -150,6 +211,12 @@ It covers Chromium and WebKit at 320px/390px phone layouts, accessible 48px+ cho
 save/lock behavior, reload/logout isolation, result rendering, board filtering,
 countdown rollover, offline/background polling, retry, and explicit storage fallback.
 Screenshots/traces are written under ignored `test-results/`.
+
+`test:playground` starts the actual `npm run playground` server and exercises its real
+local adapter in Chromium and WebKit at both phone widths. It **does not intercept or
+mock API routes**. Coverage proves admin clock/outcome actions drive the existing player
+screens, reload persistence, reset confirmation, storage failure behavior, and zero
+backend/external requests. Artifacts go to ignored `playground-test-results/`.
 
 The committed icons/favicon are rendered from `assets/brand.svg`. After installing
 Playwright Chromium, `npm run assets` reproduces them locally. This is an authoring

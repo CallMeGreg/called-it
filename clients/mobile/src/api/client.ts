@@ -1,13 +1,15 @@
 import { z } from 'zod';
 
 import type { SessionStore } from '../auth/store';
-import { synchronizeClock, type ServerClock } from '../game/rounds';
+import { synchronizeClock } from '../game/rounds';
 import {
   authSchema, gameSchema, guessSchema, leaderboardSchema, problemSchema,
-  type AuthResult, type BoardFilter, type Game, type Side,
+  type AuthResult, type BoardFilter, type Side,
 } from './contracts';
 import { CancelledRequest, ClientError, describeError } from './errors';
+import type { GameClient, GameSnapshot } from './game-client';
 
+export type { GameSnapshot } from './game-client';
 export interface SessionSnapshot {
   status: 'loading' | 'signed-out' | 'signed-in';
   auth: AuthResult | null;
@@ -15,11 +17,6 @@ export interface SessionSnapshot {
   notice: string | null;
   storageWarning: string | null;
   cleanupRequired: boolean;
-}
-
-export interface GameSnapshot {
-  game: Game;
-  clock: ServerClock;
 }
 
 interface ResponseEnvelope<T> {
@@ -45,7 +42,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-export class ApiClient {
+export class ApiClient implements GameClient {
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
   private readonly monotonicNow: () => number;

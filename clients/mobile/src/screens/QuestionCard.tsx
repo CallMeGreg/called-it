@@ -10,12 +10,13 @@ const categoryStyles = {
   pop_culture: { color: colors.pop_culture, backgroundColor: colors.pop_cultureBg, index: '03' },
 };
 
-export function QuestionCard({ question, stats, disabled, busy, onPick }: {
+export function QuestionCard({ question, stats, disabled, busy, onPick, local = false }: {
   question: Question;
   stats: CategoryStats | undefined;
   disabled: boolean;
   busy: boolean;
   onPick: (pick: Side | null) => void;
+  local?: boolean;
 }) {
   const category = categoryStyles[question.categoryCode];
   const hasSelection = question.mySkip || question.myPick !== null;
@@ -42,7 +43,7 @@ export function QuestionCard({ question, stats, disabled, busy, onPick }: {
               accessibilityLabel={`Pick ${side}: ${label} for ${question.categoryName}`}
               accessibilityState={{ selected, disabled: disabled || busy }}
               aria-pressed={Platform.OS === 'web' ? selected : undefined}
-              accessibilityHint="You can change your call until the server locks this round."
+              accessibilityHint={local ? 'You can change your call until local controls lock this round.' : 'You can change your call until the server locks this round.'}
               disabled={disabled || busy}
               onPress={() => onPick(side)}
               style={({ pressed }) => [styles.choice, selected && styles.selectedChoice, disabled && !selected && styles.disabled, pressed && styles.pressed]}

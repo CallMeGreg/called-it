@@ -77,6 +77,7 @@ export const guessSchema = z.object({
   isSkip: z.boolean(),
   submittedAt: timestamp,
 });
+export type GuessResult = z.infer<typeof guessSchema>;
 
 export const boardTypes = ['TotalScore', 'OverallStreak', 'CategoryStreak', 'CategoryBestStreak'] as const;
 export type BoardType = typeof boardTypes[number];
