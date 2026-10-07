@@ -3,6 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Restore against just the project graph first for better layer caching.
+COPY Directory.Build.props global.json ./
 COPY src/CalledIt.Domain/CalledIt.Domain.csproj src/CalledIt.Domain/
 COPY src/CalledIt.Application/CalledIt.Application.csproj src/CalledIt.Application/
 COPY src/CalledIt.Infrastructure/CalledIt.Infrastructure.csproj src/CalledIt.Infrastructure/

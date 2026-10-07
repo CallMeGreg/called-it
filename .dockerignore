@@ -3,6 +3,17 @@
 **/obj/
 **/out/
 **/*.user
+**/node_modules/
+**/dist/
+**/.expo/
+**/playwright-report/
+**/test-results/
+.env
+.env.*
+**/.env
+**/.env.*
+**/*owner*.json
+**/*.secrets.json
 
 # Local dev / test databases
 *.db
@@ -14,7 +25,8 @@
 .github/
 .vs/
 .idea/
-clients/
+clients/*
+!clients/mobile/
 infra/
 tests/
 docs/

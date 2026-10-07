@@ -6,8 +6,21 @@ on:
       environment:
         description: Target environment
         type: choice
-        options: [dev, prod]
+        options: [dev, prod, test]
         default: dev
+      test_action:
+        description: TEST only; Start is explicit, Status never provisions
+        type: choice
+        options: [status, start, extend, stop]
+        default: status
+      test_run_id:
+        description: Exact current TEST run ID for Extend or Stop
+        type: string
+        default: ''
+      confirm_stop:
+        description: For Stop, repeat the run ID after reviewing Status
+        type: string
+        default: ''
   push:
     branches: [main]
     paths:
@@ -27,13 +40,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Explicit TEST lifecycle
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'test' }}
+    uses: ./.github/workflows/deploy-test.yml
+    with:
+      action: ${{ inputs.test_action }}
+      run_id: ${{ inputs.test_run_id }}
+      confirm_stop: ${{ inputs.confirm_stop }}
+
   deploy:
     name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
     runs-on: ubuntu-latest
     # Auto-deploy on push only after CD is enabled (set the repository variable
     # AZURE_DEPLOY_ENABLED=true once environments + OIDC are configured). Manual
     # runs via "Run workflow" always proceed. See the manual-setup issue.
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.AZURE_DEPLOY_ENABLED == 'true' }}
+    if: ${{ github.event.inputs.environment != 'test' && (github.event_name == 'workflow_dispatch' || vars.AZURE_DEPLOY_ENABLED == 'true') }}
     environment: ${{ github.event.inputs.environment || 'dev' }}
     env:
       ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}

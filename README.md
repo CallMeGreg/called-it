@@ -4,9 +4,15 @@ A daily casual-forecasting game. Three binary predictions a day — **Sports**, 
 **Pop Culture** — dropped to everyone at the same moment with a hard **6-hour lock**. Build
 per-category streaks, chase a permanent lifetime score, and climb friends + global leaderboards.
 
-This repository contains the **Azure-hosted backend** (fully implemented + tested), **Bicep IaC**,
-**GitHub Actions CI/CD**, and an **iOS client scaffold** built against a shared
-OpenAPI contract.
+This repository contains the **.NET 10 backend**, **Bicep IaC**, **GitHub Actions CI/CD**,
+and a shared **Expo React Native client**, initially served as mobile web alongside the API.
+The original SwiftUI scaffold and shared OpenAPI contract remain available.
+
+**Phone-playable TEST:** invite-only, simulated shared two-minute rounds, with explicit
+Start/Stop and four-hour automatic expiry. Accounts/results survive Stop in private Azure SQL;
+disposable compute/network/registry resources do not. Expect roughly **$5-6/month while Off**
+plus usage during tests. Follow [the TEST deployment runbook](docs/test-deployment.md);
+the full daily-game dev/prod architecture below is not the TEST resource footprint.
 
 ---
 
@@ -42,7 +48,7 @@ each have **Global** and **Friends** leaderboards.
 
 ---
 
-## Architecture
+## Full daily-game architecture (dev/prod)
 
 ```mermaid
 flowchart TB
@@ -89,7 +95,7 @@ cloud credentials). See [`docs/architecture.md`](docs/architecture.md) for the f
 | Compute | Azure Container Apps |
 | IaC | Bicep (modular, resource-group scoped) |
 | CI/CD | GitHub Actions (build/test + OIDC deploy) |
-| Clients | iOS SwiftUI (contract-first) |
+| Clients | Expo React Native: mobile web first, native iOS/Android later; legacy SwiftUI scaffold |
 
 ---
 
@@ -104,8 +110,11 @@ called-it/
     CalledIt.Api/             # Web API: auth, daily set, guesses, leaderboards, contacts, admin
     CalledIt.Workers/         # background jobs: daily-set builder, resolver, window-closing notifier
   tests/                      # Domain (unit) + Application & Api (integration) tests
-  infra/                      # Bicep: main + 11 modules + dev/prod params  (see infra/README.md)
-  clients/                  # shared OpenAPI + iOS scaffold               (see clients/README.md)
+  infra/                      # Bicep: existing dev/prod plus retained-data/disposable TEST
+  scripts/test/               # guarded TEST Start/Stop/Extend + private invite management
+  tools/TestDatabase/         # private managed-identity SQL bootstrap/migration image
+  clients/                    # Expo mobile/web, shared OpenAPI, legacy iOS scaffold
+  docs/test-deployment.md     # TEST operator runbook, costs, expiry, permissions
   docs/architecture.md        # full tech-stack & cloud-architecture spec
   .github/workflows/          # ci.yml (build/test + bicep) · deploy.yml (OIDC → ACR → Container Apps)
   Dockerfile · Dockerfile.workers
@@ -207,11 +216,14 @@ affected users' streaks, totals, and leaderboards — so corrections are always 
 ## Deployment (Azure) & CI/CD
 
 - **CI** (`.github/workflows/ci.yml`): restores, builds, and tests the solution on every PR and push
-  to `main`, and validates the Bicep templates.
+  to `main`; validates Bicep and TEST lifecycle guards; checks the Expo export and image targets.
 - **CD** (`.github/workflows/deploy.yml`): logs in to Azure with **OIDC** (no stored cloud secrets),
   converges infrastructure with Bicep, builds both images on the runner and pushes them to ACR, and
   rolls the Container Apps. Manual `dev`/`prod` dispatch; auto-deploys to `dev` on `main` once the repo variable
   `AZURE_DEPLOY_ENABLED=true` is set.
+- **TEST** (manual `environment=test` in the same registered workflow): Start, Status, Extend,
+  confirmed Stop. Uses a separate OIDC environment and Bicep deployment stack; never auto-starts.
+  See [exact TEST commands and retained-data costs](docs/test-deployment.md).
 
 Provisioning specifics and the one-time SQL managed-identity step are in
 [`infra/README.md`](infra/README.md). The human-only setup (Azure resource group, OIDC federated
@@ -220,12 +232,13 @@ tracked in the repository's **manual-setup issue**.
 
 ---
 
-## Mobile client (iOS)
+## Mobile client
 
-`clients/` holds a shared **OpenAPI contract** plus a **SwiftUI (iOS)** scaffold wired for the real
-auth, today-card, and leaderboard flows. It is the clearly-scoped **next workstream** — a buildable
-starting point, not yet a compiled app (this environment has no Xcode). See
-[`clients/README.md`](clients/README.md).
+`clients/mobile` is the shared **Expo React Native** client. Its static web export is copied into
+the API image and served at the same HTTPS origin for phone-browser testing. Native iOS/Android
+packaging and distribution are later work; a successful browser run is not a native binary claim.
+The original **SwiftUI** scaffold remains under `clients/ios`. See
+[`clients/README.md`](clients/README.md) and [the TEST API contract](docs/test-api.md).
 
 ---
 
@@ -239,11 +252,11 @@ starting point, not yet a compiled app (this environment has no Xcode). See
 | API endpoints + admin | ✅ Implemented + integration-tested |
 | Background workers | ✅ Implemented |
 | Bicep IaC | ✅ Authored + validated |
-| CI/CD + Dockerfiles | ✅ Authored; CI green |
-| iOS client | 🚧 Scaffolded against OpenAPI (next workstream) |
-| Live Azure deploy | ⏳ Needs the one-time manual setup (see the issue) |
+| CI/CD + Dockerfiles | ✅ Authored; TEST includes API/web and migration image checks |
+| Mobile client | Expo web first; native iOS/Android packaging later |
+| On-demand TEST IaC | Authored with private SQL, retained results, explicit Start/Stop and expiry |
+| Live Azure TEST deploy | Operator bootstrap and Start/Stop acceptance required; see the TEST runbook |
 
 ## License
 
 See [`LICENSE`](LICENSE).
-

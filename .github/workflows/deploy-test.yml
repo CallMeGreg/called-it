@@ -1,0 +1,85 @@
+name: TEST lifecycle
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        required: true
+        type: string
+      run_id:
+        default: ''
+        type: string
+      confirm_stop:
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  lifecycle:
+    name: TEST ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: test
+    env:
+      AZURE_CORE_OUTPUT: none
+      AZURE_CORE_ONLY_SHOW_ERRORS: 'true'
+      TEST_ACTION: ${{ inputs.action }}
+      TEST_RUN_ID: ${{ inputs.run_id }}
+      TEST_CONFIRM_STOP: ${{ inputs.confirm_stop }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+
+      - name: Validate explicit manual operation
+        run: |
+          set -euo pipefail
+          case "$TEST_ACTION" in
+            start|status) ;;
+            stop|extend)
+              [[ "$TEST_RUN_ID" =~ ^[a-f0-9]{32}$ ]]
+              [[ "$TEST_RUN_ID" != 00000000000000000000000000000000 ]]
+              ;;
+            *) echo "::error::Unsupported TEST lifecycle action"; exit 1 ;;
+          esac
+          if [[ "$TEST_ACTION" == stop && "$TEST_CONFIRM_STOP" != "$TEST_RUN_ID" ]]; then
+            echo "::error::Review Status first, then confirm_stop must equal test_run_id."
+            exit 1
+          fi
+          AZURE_CONFIG_DIR="$RUNNER_TEMP/called-it-test-azure"
+          DOCKER_CONFIG="$RUNNER_TEMP/called-it-test-docker"
+          mkdir -m 700 "$AZURE_CONFIG_DIR" "$DOCKER_CONFIG"
+          {
+            echo "AZURE_CONFIG_DIR=$AZURE_CONFIG_DIR"
+            echo "DOCKER_CONFIG=$DOCKER_CONFIG"
+          } >> "$GITHUB_ENV"
+
+      - name: Azure login (TEST environment OIDC only)
+        id: login
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ vars.AZURE_TEST_CLIENT_ID }}
+          tenant-id: 7b73b4a1-6b8a-47be-b3b0-0f441ef65a34
+          subscription-id: b5ccc8c6-8222-4b70-83a3-3d7de1e5920f
+
+      - name: Scope and prerequisite checks
+        run: node scripts/test/lifecycle.mjs preflight
+
+      - name: Run the guarded TEST lifecycle
+        run: |
+          set -euo pipefail
+          case "$TEST_ACTION" in
+            start) node scripts/test/lifecycle.mjs start ;;
+            status) node scripts/test/lifecycle.mjs status ;;
+            extend) node scripts/test/lifecycle.mjs extend --run-id "$TEST_RUN_ID" ;;
+            stop) node scripts/test/lifecycle.mjs stop --run-id "$TEST_RUN_ID" --confirm "$TEST_CONFIRM_STOP" ;;
+          esac
+
+      - name: Final lifecycle status
+        if: ${{ always() && !cancelled() && steps.login.outcome == 'success' }}
+        run: node scripts/test/lifecycle.mjs status

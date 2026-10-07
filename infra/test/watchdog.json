@@ -1,0 +1,728 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "stateUrl": {
+      "type": "String"
+    },
+    "runGroupId": {
+      "type": "String"
+    },
+    "managedGroupId": {
+      "type": "String"
+    },
+    "subscriptionId": {
+      "type": "String"
+    },
+    "tenantId": {
+      "type": "String"
+    },
+    "identityId": {
+      "type": "String"
+    }
+  },
+  "triggers": {
+    "Check_expiry": {
+      "type": "Recurrence",
+      "recurrence": {
+        "frequency": "Minute",
+        "interval": 5
+      },
+      "runtimeConfiguration": {
+        "concurrency": {
+          "runs": 1
+        }
+      }
+    }
+  },
+  "actions": {
+    "Read_state": {
+      "type": "Http",
+      "inputs": {
+        "method": "GET",
+        "uri": "@concat(parameters('stateUrl'),'')",
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "identity": "@parameters('identityId')",
+          "audience": "https://storage.azure.com/"
+        },
+        "retryPolicy": {
+          "type": "none"
+        },
+        "headers": {
+          "x-ms-version": "2023-11-03",
+          "x-ms-date": "@formatDateTime(utcNow(),'r')"
+        }
+      },
+      "operationOptions": "DisableAsyncPattern",
+      "limit": {
+        "timeout": "PT20S"
+      },
+      "runAfter": {}
+    },
+    "Idle": {
+      "type": "If",
+      "expression": "@and(equals(body('Read_state')?['schemaVersion'],1),equals(body('Read_state')?['subscriptionId'],parameters('subscriptionId')),equals(body('Read_state')?['tenantId'],parameters('tenantId')),equals(body('Read_state')?['phase'],'Idle'))",
+      "actions": {},
+      "else": {
+        "actions": {
+          "Valid_run": {
+            "type": "If",
+            "expression": "@and( equals(body('Read_state')?['schemaVersion'],1), equals(body('Read_state')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_state')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_state')?['phase']), equals(length(coalesce(body('Read_state')?['runId'],'')),32), not(equals(body('Read_state')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_state')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), equals(body('Read_state')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_state')?['runId'])) )",
+            "actions": {
+              "Is_due": {
+                "type": "If",
+                "expression": "@or(equals(body('Read_state')?['phase'],'Stopping'),lessOrEquals(ticks(coalesce(body('Read_state')?['expiresAt'],'9999-12-31T23:59:59Z')),ticks(utcNow())))",
+                "actions": {
+                  "Lease_id": {
+                    "type": "Compose",
+                    "inputs": "@guid()",
+                    "runAfter": {}
+                  },
+                  "Acquire_state": {
+                    "type": "Http",
+                    "inputs": {
+                      "method": "PUT",
+                      "uri": "@concat(parameters('stateUrl'),'?comp=lease')",
+                      "authentication": {
+                        "type": "ManagedServiceIdentity",
+                        "identity": "@parameters('identityId')",
+                        "audience": "https://storage.azure.com/"
+                      },
+                      "retryPolicy": {
+                        "type": "none"
+                      },
+                      "headers": {
+                        "x-ms-version": "2023-11-03",
+                        "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                        "x-ms-lease-action": "acquire",
+                        "x-ms-lease-duration": "60",
+                        "x-ms-proposed-lease-id": "@outputs('Lease_id')"
+                      }
+                    },
+                    "operationOptions": "DisableAsyncPattern",
+                    "limit": {
+                      "timeout": "PT20S"
+                    },
+                    "runAfter": {
+                      "Lease_id": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Claim_locked": {
+                    "type": "Scope",
+                    "actions": {
+                      "Read_current": {
+                        "type": "Http",
+                        "inputs": {
+                          "method": "GET",
+                          "uri": "@concat(parameters('stateUrl'),'')",
+                          "authentication": {
+                            "type": "ManagedServiceIdentity",
+                            "identity": "@parameters('identityId')",
+                            "audience": "https://storage.azure.com/"
+                          },
+                          "retryPolicy": {
+                            "type": "none"
+                          },
+                          "headers": {
+                            "x-ms-version": "2023-11-03",
+                            "x-ms-date": "@formatDateTime(utcNow(),'r')"
+                          }
+                        },
+                        "operationOptions": "DisableAsyncPattern",
+                        "limit": {
+                          "timeout": "PT20S"
+                        },
+                        "runAfter": {}
+                      },
+                      "Still_due": {
+                        "type": "If",
+                        "expression": "@and(and( equals(body('Read_current')?['schemaVersion'],1), equals(body('Read_current')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_current')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_current')?['phase']), equals(length(coalesce(body('Read_current')?['runId'],'')),32), not(equals(body('Read_current')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_current')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), equals(body('Read_current')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_current')?['runId'])) ),equals(body('Read_current')?['runId'],body('Read_state')?['runId']),or(equals(body('Read_current')?['phase'],'Stopping'),lessOrEquals(ticks(coalesce(body('Read_current')?['expiresAt'],'9999-12-31T23:59:59Z')),ticks(utcNow()))))",
+                        "actions": {
+                          "Mark_stopping": {
+                            "type": "Http",
+                            "inputs": {
+                              "method": "PUT",
+                              "uri": "@concat(parameters('stateUrl'),'')",
+                              "authentication": {
+                                "type": "ManagedServiceIdentity",
+                                "identity": "@parameters('identityId')",
+                                "audience": "https://storage.azure.com/"
+                              },
+                              "retryPolicy": {
+                                "type": "none"
+                              },
+                              "headers": {
+                                "x-ms-version": "2023-11-03",
+                                "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                                "x-ms-blob-type": "BlockBlob",
+                                "x-ms-lease-id": "@outputs('Lease_id')",
+                                "Content-Type": "application/json"
+                              },
+                              "body": "@setProperty(setProperty(setProperty(body('Read_current'),'phase','Stopping'),'stopRequestedAt',coalesce(body('Read_current')?['stopRequestedAt'],utcNow())),'updatedAt',utcNow())"
+                            },
+                            "operationOptions": "DisableAsyncPattern",
+                            "limit": {
+                              "timeout": "PT20S"
+                            },
+                            "runAfter": {}
+                          }
+                        },
+                        "else": {
+                          "actions": {}
+                        },
+                        "runAfter": {
+                          "Read_current": [
+                            "Succeeded"
+                          ]
+                        }
+                      }
+                    },
+                    "runAfter": {
+                      "Acquire_state": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Release_state": {
+                    "type": "Http",
+                    "inputs": {
+                      "method": "PUT",
+                      "uri": "@concat(parameters('stateUrl'),'?comp=lease')",
+                      "authentication": {
+                        "type": "ManagedServiceIdentity",
+                        "identity": "@parameters('identityId')",
+                        "audience": "https://storage.azure.com/"
+                      },
+                      "retryPolicy": {
+                        "type": "none"
+                      },
+                      "headers": {
+                        "x-ms-version": "2023-11-03",
+                        "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                        "x-ms-lease-action": "release",
+                        "x-ms-lease-id": "@outputs('Lease_id')"
+                      }
+                    },
+                    "operationOptions": "DisableAsyncPattern",
+                    "limit": {
+                      "timeout": "PT20S"
+                    },
+                    "runAfter": {
+                      "Claim_locked": [
+                        "Succeeded",
+                        "Failed",
+                        "TimedOut"
+                      ]
+                    }
+                  },
+                  "Lease_unavailable": {
+                    "type": "If",
+                    "expression": "@equals(outputs('Acquire_state')?['statusCode'],409)",
+                    "actions": {
+                      "Busy": {
+                        "type": "Compose",
+                        "inputs": "A lifecycle transition holds the short lease. Recheck next tick.",
+                        "runAfter": {}
+                      }
+                    },
+                    "else": {
+                      "actions": {
+                        "Lease_failed": {
+                          "type": "Terminate",
+                          "inputs": {
+                            "runStatus": "Failed",
+                            "runError": {
+                              "code": "LeaseFailed",
+                              "message": "The lifecycle lease could not be acquired. No resource deletion was attempted."
+                            }
+                          },
+                          "runAfter": {}
+                        }
+                      }
+                    },
+                    "runAfter": {
+                      "Acquire_state": [
+                        "Failed",
+                        "TimedOut"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {}
+                },
+                "runAfter": {}
+              }
+            },
+            "else": {
+              "actions": {
+                "Invalid_state": {
+                  "type": "Terminate",
+                  "inputs": {
+                    "runStatus": "Failed",
+                    "runError": {
+                      "code": "InvalidState",
+                      "message": "Invalid TEST lifecycle state. Refusing any resource mutation."
+                    }
+                  },
+                  "runAfter": {}
+                }
+              }
+            },
+            "runAfter": {}
+          }
+        }
+      },
+      "runAfter": {
+        "Read_state": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Clean_claimed_run": {
+      "type": "If",
+      "expression": "@and(equals(actions('Mark_stopping')?['status'],'Succeeded'),equals(actions('Release_state')?['status'],'Succeeded'))",
+      "actions": {
+        "Read_stack": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "@concat('https://management.azure.com',concat(body('Read_current')?['stackId'],'?api-version=2024-03-01'))",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "https://management.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "none"
+            }
+          },
+          "operationOptions": "DisableAsyncPattern",
+          "limit": {
+            "timeout": "PT20S"
+          },
+          "runAfter": {}
+        },
+        "Stack_result": {
+          "type": "If",
+          "expression": "@equals(outputs('Read_stack')?['statusCode'],404)",
+          "actions": {
+            "Read_remaining": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "@concat('https://management.azure.com',concat(parameters('runGroupId'),'/resources?api-version=2021-04-01'))",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "@parameters('identityId')",
+                  "audience": "https://management.azure.com/"
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
+              },
+              "operationOptions": "DisableAsyncPattern",
+              "limit": {
+                "timeout": "PT20S"
+              },
+              "runAfter": {}
+            },
+            "Read_managed_group": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "@concat('https://management.azure.com',concat(parameters('managedGroupId'),'?api-version=2024-03-01'))",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "@parameters('identityId')",
+                  "audience": "https://management.azure.com/"
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
+              },
+              "operationOptions": "DisableAsyncPattern",
+              "limit": {
+                "timeout": "PT20S"
+              },
+              "runAfter": {
+                "Read_remaining": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Check_empty": {
+              "type": "If",
+              "expression": "@and(equals(outputs('Read_remaining')?['statusCode'],200),not(equals(body('Read_remaining')?['value'],null)),empty(body('Read_remaining')?['value']),empty(body('Read_remaining')?['nextLink']),equals(outputs('Read_managed_group')?['statusCode'],404))",
+              "actions": {
+                "Acquire_finish": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "PUT",
+                    "uri": "@concat(parameters('stateUrl'),'?comp=lease')",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "identity": "@parameters('identityId')",
+                      "audience": "https://storage.azure.com/"
+                    },
+                    "retryPolicy": {
+                      "type": "none"
+                    },
+                    "headers": {
+                      "x-ms-version": "2023-11-03",
+                      "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                      "x-ms-lease-action": "acquire",
+                      "x-ms-lease-duration": "60",
+                      "x-ms-proposed-lease-id": "@outputs('Lease_id')"
+                    }
+                  },
+                  "operationOptions": "DisableAsyncPattern",
+                  "limit": {
+                    "timeout": "PT20S"
+                  },
+                  "runAfter": {}
+                },
+                "Finish_locked": {
+                  "type": "Scope",
+                  "actions": {
+                    "Read_finish": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "GET",
+                        "uri": "@concat(parameters('stateUrl'),'')",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "identity": "@parameters('identityId')",
+                          "audience": "https://storage.azure.com/"
+                        },
+                        "retryPolicy": {
+                          "type": "none"
+                        },
+                        "headers": {
+                          "x-ms-version": "2023-11-03",
+                          "x-ms-date": "@formatDateTime(utcNow(),'r')"
+                        }
+                      },
+                      "operationOptions": "DisableAsyncPattern",
+                      "limit": {
+                        "timeout": "PT20S"
+                      },
+                      "runAfter": {}
+                    },
+                    "Same_run": {
+                      "type": "If",
+                      "expression": "@and(equals(body('Read_finish')?['runId'],body('Read_current')?['runId']),equals(body('Read_finish')?['phase'],'Stopping'))",
+                      "actions": {
+                        "Write_idle": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "PUT",
+                            "uri": "@concat(parameters('stateUrl'),'')",
+                            "authentication": {
+                              "type": "ManagedServiceIdentity",
+                              "identity": "@parameters('identityId')",
+                              "audience": "https://storage.azure.com/"
+                            },
+                            "retryPolicy": {
+                              "type": "none"
+                            },
+                            "headers": {
+                              "x-ms-version": "2023-11-03",
+                              "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                              "x-ms-blob-type": "BlockBlob",
+                              "x-ms-lease-id": "@outputs('Lease_id')",
+                              "Content-Type": "application/json"
+                            },
+                            "body": "@setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(body('Read_finish'),'phase','Idle'),'lastRunId',body('Read_current')?['runId']),'runId',null),'stackId',null),'expiresAt',null),'url',null),'lastError',null),'updatedAt',utcNow())"
+                          },
+                          "operationOptions": "DisableAsyncPattern",
+                          "limit": {
+                            "timeout": "PT20S"
+                          },
+                          "runAfter": {}
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Invalid_finish": {
+                            "type": "Terminate",
+                            "inputs": {
+                              "runStatus": "Failed",
+                              "runError": {
+                                "code": "StateChanged",
+                                "message": "Cleanup cannot clear another run. Inspect TEST lifecycle state."
+                              }
+                            },
+                            "runAfter": {}
+                          }
+                        }
+                      },
+                      "runAfter": {
+                        "Read_finish": [
+                          "Succeeded"
+                        ]
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Acquire_finish": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Release_finish": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "PUT",
+                    "uri": "@concat(parameters('stateUrl'),'?comp=lease')",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "identity": "@parameters('identityId')",
+                      "audience": "https://storage.azure.com/"
+                    },
+                    "retryPolicy": {
+                      "type": "none"
+                    },
+                    "headers": {
+                      "x-ms-version": "2023-11-03",
+                      "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                      "x-ms-lease-action": "release",
+                      "x-ms-lease-id": "@outputs('Lease_id')"
+                    }
+                  },
+                  "operationOptions": "DisableAsyncPattern",
+                  "limit": {
+                    "timeout": "PT20S"
+                  },
+                  "runAfter": {
+                    "Finish_locked": [
+                      "Succeeded",
+                      "Failed",
+                      "Skipped",
+                      "TimedOut"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Leftovers": {
+                    "type": "Terminate",
+                    "inputs": {
+                      "runStatus": "Failed",
+                      "runError": {
+                        "code": "CleanupIncomplete",
+                        "message": "Disposable resources or the ACA-managed group remain. State stays Stopping; cleanup will retry. Data and keys were not targeted."
+                      }
+                    },
+                    "runAfter": {}
+                  }
+                }
+              },
+              "runAfter": {
+                "Read_managed_group": [
+                  "Succeeded",
+                  "Failed",
+                  "TimedOut"
+                ]
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "Stack_exists": {
+                "type": "If",
+                "expression": "@equals(outputs('Read_stack')?['statusCode'],200)",
+                "actions": {
+                  "Foreign_resources": {
+                    "type": "Query",
+                    "inputs": {
+                      "from": "@coalesce(body('Read_stack')?['properties']?['resources'],json('[]'))",
+                      "where": "@not(startsWith(toLower(item()?['id']),concat(toLower(parameters('runGroupId')),'/providers/')))"
+                    },
+                    "runAfter": {}
+                  },
+                  "Owned_stack": {
+                    "type": "If",
+                    "expression": "@and(empty(body('Foreign_resources')),not(equals(body('Read_stack')?['properties']?['resources'],null)),equals(toLower(body('Read_stack')?['id']),toLower(body('Read_current')?['stackId'])),equals(body('Read_stack')?['tags']?['runId'],body('Read_current')?['runId']),equals(body('Read_stack')?['tags']?['application'],'called-it'),equals(body('Read_stack')?['tags']?['environment'],'test'),equals(toLower(body('Read_stack')?['properties']?['deploymentScope']),toLower(parameters('runGroupId'))),equals(body('Read_stack')?['properties']?['denySettings']?['mode'],'none'))",
+                    "actions": {
+                      "Deployment_busy": {
+                        "type": "If",
+                        "expression": "@contains(createArray('Creating','Updating','Validating','Deploying','Canceling'),body('Read_stack')?['properties']?['provisioningState'])",
+                        "actions": {
+                          "Check_deployment_scope": {
+                            "type": "If",
+                            "expression": "@startsWith(toLower(coalesce(body('Read_stack')?['properties']?['deploymentId'],'')),concat(toLower(parameters('runGroupId')),'/providers/microsoft.resources/deployments/'))",
+                            "actions": {
+                              "Cancel_inflight": {
+                                "type": "Http",
+                                "inputs": {
+                                  "method": "POST",
+                                  "uri": "@concat('https://management.azure.com',concat(body('Read_stack')?['properties']?['deploymentId'],'/cancel?api-version=2022-09-01'))",
+                                  "authentication": {
+                                    "type": "ManagedServiceIdentity",
+                                    "identity": "@parameters('identityId')",
+                                    "audience": "https://management.azure.com/"
+                                  },
+                                  "retryPolicy": {
+                                    "type": "none"
+                                  }
+                                },
+                                "operationOptions": "DisableAsyncPattern",
+                                "limit": {
+                                  "timeout": "PT20S"
+                                },
+                                "runAfter": {}
+                              }
+                            },
+                            "else": {
+                              "actions": {
+                                "Missing_deployment": {
+                                  "type": "Terminate",
+                                  "inputs": {
+                                    "runStatus": "Failed",
+                                    "runError": {
+                                      "code": "DeploymentBusy",
+                                      "message": "Stack deployment is still busy. Retry after it settles; never delete untracked resources."
+                                    }
+                                  },
+                                  "runAfter": {}
+                                }
+                              }
+                            },
+                            "runAfter": {}
+                          }
+                        },
+                        "else": {
+                          "actions": {
+                            "Already_deleting": {
+                              "type": "If",
+                              "expression": "@equals(body('Read_stack')?['properties']?['provisioningState'],'Deleting')",
+                              "actions": {
+                                "Await_provider": {
+                                  "type": "Compose",
+                                  "inputs": "Teardown is in progress; the next watchdog check verifies completion.",
+                                  "runAfter": {}
+                                }
+                              },
+                              "else": {
+                                "actions": {
+                                  "Delete_owned_stack": {
+                                    "type": "Http",
+                                    "inputs": {
+                                      "method": "DELETE",
+                                      "uri": "@concat('https://management.azure.com',concat(body('Read_current')?['stackId'],'?api-version=2024-03-01&unmanageAction.Resources=delete&unmanageAction.ResourceGroups=detach&unmanageAction.ManagementGroups=detach'))",
+                                      "authentication": {
+                                        "type": "ManagedServiceIdentity",
+                                        "identity": "@parameters('identityId')",
+                                        "audience": "https://management.azure.com/"
+                                      },
+                                      "retryPolicy": {
+                                        "type": "none"
+                                      }
+                                    },
+                                    "operationOptions": "DisableAsyncPattern",
+                                    "limit": {
+                                      "timeout": "PT20S"
+                                    },
+                                    "runAfter": {}
+                                  }
+                                }
+                              },
+                              "runAfter": {}
+                            }
+                          }
+                        },
+                        "runAfter": {}
+                      }
+                    },
+                    "else": {
+                      "actions": {
+                        "Refuse_foreign": {
+                          "type": "Terminate",
+                          "inputs": {
+                            "runStatus": "Failed",
+                            "runError": {
+                              "code": "UnsafeStack",
+                              "message": "Refusing a stack with foreign resources, unexpected ownership, scope, or deny settings."
+                            }
+                          },
+                          "runAfter": {}
+                        }
+                      }
+                    },
+                    "runAfter": {
+                      "Foreign_resources": [
+                        "Succeeded"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {
+                    "Stack_read_failed": {
+                      "type": "Terminate",
+                      "inputs": {
+                        "runStatus": "Failed",
+                        "runError": {
+                          "code": "StackReadFailed",
+                          "message": "Unable to inspect the disposable stack. Cleanup was not attempted."
+                        }
+                      },
+                      "runAfter": {}
+                    }
+                  }
+                },
+                "runAfter": {}
+              }
+            }
+          },
+          "runAfter": {
+            "Read_stack": [
+              "Succeeded",
+              "Failed",
+              "TimedOut"
+            ]
+          }
+        },
+        "Cleanup_deadline": {
+          "type": "If",
+          "expression": "@and(not(equals(actions('Write_idle')?['status'],'Succeeded')),lessOrEquals(ticks(addMinutes(coalesce(body('Read_current')?['stopRequestedAt'],utcNow()),20)),ticks(utcNow())))",
+          "actions": {
+            "Cleanup_overdue": {
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Failed",
+                "runError": {
+                  "code": "CleanupOverdue",
+                  "message": "TEST cleanup is still incomplete after 20 minutes. Inspect stack/provider operations; paid resources may remain. Later checks continue retrying."
+                }
+              },
+              "runAfter": {}
+            }
+          },
+          "else": {
+            "actions": {}
+          },
+          "runAfter": {
+            "Stack_result": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Idle": [
+          "Succeeded"
+        ]
+      }
+    }
+  },
+  "outputs": {}
+}

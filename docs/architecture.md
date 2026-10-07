@@ -1,10 +1,35 @@
 # "Called It" — Tech Stack & Cloud Architecture (Azure)
 
+## Current TEST deployment
+
+The approved phone-playable TEST slice uses shared **Expo React Native** code, initially
+exported as static mobile web beside the .NET 10 API. Native iOS/Android binaries and distribution
+come later; the SwiftUI discussion below is a historical proposal, not the current client choice.
+TEST replaces the daily six-hour loop with shared **120-second simulated rounds**, invite-only
+unprivileged accounts, request-driven advancement and database-backed leaderboards.
+
+TEST is **on demand**: explicit Start, four-hour default expiry, Extend, and confirmed Stop.
+`called-it-test-data` retains SQL Basic (public network permanently disabled), stable keys,
+identities and a small independent expiry controller. A deployment stack in `called-it-test-run`
+owns the API/static site, private SQL access path, ACR, migration Job and Consumption ACA
+environment; Stop removes these and verifies Azure's managed LB/public-IP group also disappears.
+The runtime SQL identity has DML permissions only; a separate in-VNet Job applies migrations.
+There is no always-on Workers/Redis/SMS/push footprint. Off retains approximately $5-6/month of
+data/controller costs, rather than claiming zero spend.
+
+The exact scope, phases, privileges, configuration, cost caveats and operator commands are in
+[the TEST runbook](test-deployment.md). [TEST API behavior](test-api.md) specifies invite
+revocation, persistence, health and game timing. Existing dev/prod templates remain separate.
+
+The following sections preserve the longer-term **daily-game specification**; they do not
+describe resources provisioned by TEST.
+
 ## 1. Goals & confirmed decisions
 Build a daily casual-forecasting app with private (friends) + global leaderboards.
 
 **Locked decisions**
-- **Client:** Native **iOS (Swift/SwiftUI)**.
+- **Client:** Shared **Expo React Native**, mobile web initially; native iOS/Android later.
+  The original SwiftUI proposal is retained below for historical context.
 - **Auth:** **Phone-number = primary ID**, verified by **SMS OTP**, **plus mandatory Sign in with
   Apple / Google** from day one (security + account recovery).
 - **Cloud:** **Azure** for all services.
@@ -65,7 +90,7 @@ Build a daily casual-forecasting app with private (friends) + global leaderboard
 
 ---
 
-## 3. Client architecture (native iOS)
+## 3. Historical native iOS proposal (superseded by shared Expo client)
 
 **iOS**
 - Swift, SwiftUI, async/await; MVVM.

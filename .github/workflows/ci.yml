@@ -31,11 +31,48 @@ jobs:
       - name: Test
         run: dotnet test CalledIt.sln -c Release --no-build --verbosity normal
 
+      - name: Private SQL bootstrap helper
+        run: dotnet run --project tools/TestDatabase/TestDatabase.csproj -c Release -- --self-test
+
+  client:
+    name: Expo web checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/mobile
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: clients/mobile/package-lock.json
+      - run: npm ci
+      - run: npm run lint && npm run typecheck && npm test && npm run export:web
+
+  images:
+    name: API, web, and migration images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Build API and migration targets without publishing
+        run: |
+          docker build --target migration --tag called-it-migrate:ci .
+          docker run --rm called-it-migrate:ci --self-test
+          docker build --target api --tag called-it-api:ci .
+
   validate-infra:
     name: Validate Bicep
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+
+      - name: Offline TEST lifecycle checks
+        run: node --test scripts/test/*.test.mjs && node infra/test/watchdog-definition.mjs
 
       - name: Build Bicep templates
         run: |
@@ -43,3 +80,8 @@ jobs:
           az bicep build --file infra/main.bicep --stdout > /dev/null
           az bicep build-params --file infra/main.dev.bicepparam --stdout > /dev/null
           az bicep build-params --file infra/main.prod.bicepparam --stdout > /dev/null
+          az bicep build --file infra/main.test.bicep --stdout > /dev/null
+          az bicep build --file infra/test/run.bicep --stdout > /dev/null
+          az bicep build --file infra/test/secrets.bicep --stdout > /dev/null
+          az bicep build-params --file infra/main.test.bicepparam --stdout > /dev/null
+          az bicep build-params --file infra/test/run.bicepparam --stdout > /dev/null

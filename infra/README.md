@@ -1,6 +1,15 @@
 # Infrastructure (Azure Bicep)
 
-Modular, resource-group-scoped IaC for **Called It**. One deployment provisions the full platform:
+**On-demand TEST uses a separate entrypoint and lifecycle.** Start with
+[`docs/test-deployment.md`](../docs/test-deployment.md): `main.test.bicep` retains private SQL,
+keys and a tiny expiry controller; `test/run.bicep` owns disposable ACA/network/registry resources
+through a deployment stack. Start is explicit, expiry defaults to four hours, and Stop preserves
+accounts/results. There is no TEST SQL password, public firewall exception, or manual database
+user prerequisite.
+
+The rest of this page describes the **existing dev/prod** resource-group-scoped deployment.
+Do not use its full-platform sizing, SQL grants or manual commands for TEST.
+One dev/prod deployment provisions the full platform:
 
 | Concern | Resource |
 | --- | --- |
@@ -29,6 +38,9 @@ infra/
   main.bicep              # orchestrator (resource-group scoped)
   main.dev.bicepparam     # dev sizing + params (secrets from env vars)
   main.prod.bicepparam    # prod sizing + params (secrets from env vars)
+  main.test.bicep         # TEST subscription bootstrap: retained data/identity/controller
+  main.test.bicepparam    # TEST operator bootstrap parameters
+  test/                   # disposable run stack, secrets, watchdog, shared scope contract
   modules/                # one file per concern
 ```
 

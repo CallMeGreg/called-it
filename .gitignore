@@ -489,3 +489,10 @@ $RECYCLE.BIN/
 *.db-wal
 appsettings.Local.json
 .DS_Store
+
+# TEST owner bundles belong outside Git; these are defense-in-depth exclusions.
+*.secrets.json
+test-owner*.json
+clients/mobile/dist/
+clients/mobile/.expo/
+playwright-report/
