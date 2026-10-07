@@ -1,7 +1,10 @@
 @allowed(['called-it-test-data'])
 param dataGroupName string = any(resourceGroup().name)
 
+@allowed(['eastus2'])
 param location string
+@allowed(['centralus'])
+param workloadLocation string
 param tenantId string
 param operatorObjectId string
 param tags object
@@ -34,7 +37,7 @@ resource federation 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedI
 
 resource sql 'Microsoft.Sql/servers@2023-08-01' = {
   name: 'called-it-test-sql-${suffix}'
-  location: location
+  location: workloadLocation
   tags: tags
   properties: {
     version: '12.0'
@@ -55,7 +58,7 @@ resource sql 'Microsoft.Sql/servers@2023-08-01' = {
 resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
   parent: sql
   name: 'calledit'
-  location: location
+  location: workloadLocation
   tags: tags
   sku: {
     name: 'Basic'
@@ -229,6 +232,7 @@ module watchdog 'watchdog.bicep' = {
   name: 'called-it-test-watchdog'
   params: {
     location: location
+    workloadLocation: workloadLocation
     tags: tags
     identityId: identities[3].id
     stateUrl: stateUrl
@@ -240,6 +244,7 @@ output configuration object = {
   subscriptionId: subscription().subscriptionId
   tenantId: tenantId
   location: location
+  workloadLocation: workloadLocation
   dataGroup: dataGroupName
   runGroup: config.runGroup
   managedGroup: config.managedGroup

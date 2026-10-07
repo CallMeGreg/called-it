@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Azure } from './azure.mjs';
-import { CONFIG, GROUP_ID, DATA_GROUP_ID, assertFoundation, assertDigest, stackId } from './config.mjs';
+import { CONFIG, GROUP_ID, DATA_GROUP_ID, assertFoundation, assertAppUrl, assertDigest, stackId } from './config.mjs';
 import { FOUNDATION, RUN_ID } from './test-fixtures.mjs';
 
 const account = { id: CONFIG.subscriptionId, tenantId: CONFIG.tenantId, state: 'Enabled' };
@@ -78,6 +78,7 @@ test('foundation reads use data-group Reader instead of subscription deployment 
 test('foundation outputs, state endpoints, runtime identity, SQL and image digests are strict', () => {
   assert.equal(assertFoundation(FOUNDATION), FOUNDATION);
   for (const patch of [
+    { location: 'centralus' }, { workloadLocation: 'eastus2' }, { workloadLocation: undefined },
     { stateUrl: `${FOUNDATION.stateUrl}?sig=not-allowed` },
     { runtimeIdentityId: `${DATA_GROUP_ID}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/administrator` },
     { sqlServerId: `${DATA_GROUP_ID}/providers/Microsoft.Sql/servers/other` },
@@ -89,6 +90,19 @@ test('foundation outputs, state endpoints, runtime identity, SQL and image diges
     assert.throws(() => assertDigest(image, registry, 'called-it-api'));
   }
   assert.throws(() => stackId('0'.repeat(32)));
+});
+
+test('phone URLs belong only to the approved Central US workload origin', () => {
+  assert.equal(CONFIG.location, 'eastus2');
+  assert.equal(CONFIG.workloadLocation, 'centralus');
+  const url = 'https://phone.example.centralus.azurecontainerapps.io';
+  assert.equal(assertAppUrl(url), url);
+  for (const value of [
+    url.replace('centralus', 'eastus2'), url.replace('centralus', 'eastus'),
+    url.replace('centralus', 'notcentralus'), url.replace('https:', 'http:'),
+    `${url}/path`, `${url}?secret=not-allowed`, `${url}:443`, `${url}.example.org`,
+    undefined,
+  ]) assert.throws(() => assertAppUrl(value), /workload region/);
 });
 
 test('safe Azure errors expose status and code, not service response messages', async () => {

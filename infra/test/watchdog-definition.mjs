@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const protocol = JSON.parse(readFileSync(new URL('protocol.json', import.meta.url), 'utf8'));
+const config = JSON.parse(readFileSync(new URL('config.json', import.meta.url), 'utf8'));
 const stackStates = Object.fromEntries(Object.entries(protocol.stackStates)
   .map(([kind, values]) => [kind, values.map((value) => value.toLowerCase())]));
 const array = (values) => `createArray(${values.map((value) => `'${value}'`).join(',')})`;
@@ -74,9 +75,11 @@ const pendingQuery = (source, runAfter) => ({
 });
 const due = (name) => `or(equals(${body(name)}?['phase'],'Stopping'),lessOrEquals(ticks(coalesce(${body(name)}?['expiresAt'],'9999-12-31T23:59:59Z')),ticks(utcNow())))`;
 const runId = (name) => `${body(name)}?['runId']`;
+const validLocations = `and(equals(${param('controlLocation')},'${config.location}'),equals(${param('workloadLocation')},'${config.workloadLocation}'))`;
 const removeHex = (value) => [...'0123456789abcdef'].reduce((v, c) => `replace(${v},'${c}','')`, value);
 const guid = (value) => `and(equals(length(coalesce(${value},'')),36),equals(length(replace(coalesce(${value},''),'-','')),32),empty(${removeHex(`toLower(replace(coalesce(${value},''),'-',''))`)}))`;
 const validActive = (name) => `and(
+  ${validLocations},
   equals(${body(name)}?['schemaVersion'],${protocol.stateVersion}),
   equals(${body(name)}?['subscriptionId'],${param('subscriptionId')}),
   equals(${body(name)}?['tenantId'],${param('tenantId')}),
@@ -149,7 +152,8 @@ function reconciliation() {
   const urlRootOperation = ['operations', 'operationStatuses', 'operationResults', 'deploymentStackOperationStatuses', 'deploymentStackOperationResults']
     .map((kind) => `startsWith(${lowerUrl},concat(${providerRoot},'${kind.toLowerCase()}/'))`).join(',');
   const validUrl = `and(
-    or(startsWith(${lowerUrl},concat(${providerRoot},'locations/eastus2/')),
+    ${validLocations},
+    or(startsWith(${lowerUrl},concat(${providerRoot},'locations/',${param('controlLocation')},'/')),
        ${urlRootOperation},
        startsWith(${lowerUrl},concat(${scopedRoot},'/')),
        startsWith(${lowerUrl},concat(${scopedRoot},'?')),
@@ -160,6 +164,7 @@ function reconciliation() {
   const candidateMatches = `and(
     equals(${status('Read_candidate')},200),
     equals(toLower(coalesce(${candidate}?['id'],'')),toLower(${body('Read_current')}?['stackId'])),
+    equals(${candidate}?['location'],${param('controlLocation')}),
     equals(${candidate}?['tags']?['runId'],${runId('Read_current')}),
     equals(${candidate}?['tags']?['application'],'called-it'),equals(${candidate}?['tags']?['environment'],'test'),
     equals(toLower(coalesce(${candidate}?['properties']?['deploymentScope'],'')),toLower(${param('runGroupId')})),
@@ -305,7 +310,7 @@ function cleanup() {
               runAfter: {},
             },
             Owned_stack: condition(
-              `and(empty(body('Foreign_resources')),not(equals(${body('Read_stack')}?['properties']?['resources'],null)),equals(toLower(${body('Read_stack')}?['id']),toLower(${body('Read_current')}?['stackId'])),equals(${body('Read_stack')}?['tags']?['runId'],${runId('Read_current')}),equals(${body('Read_stack')}?['tags']?['application'],'called-it'),equals(${body('Read_stack')}?['tags']?['environment'],'test'),equals(toLower(${body('Read_stack')}?['properties']?['deploymentScope']),toLower(${param('runGroupId')})),equals(${body('Read_stack')}?['properties']?['denySettings']?['mode'],'none'),contains(${array(Object.values(stackStates).flat())},${stackPhase('Read_stack')}))`,
+              `and(equals(${body('Read_stack')}?['location'],${param('controlLocation')}),empty(body('Foreign_resources')),not(equals(${body('Read_stack')}?['properties']?['resources'],null)),equals(toLower(${body('Read_stack')}?['id']),toLower(${body('Read_current')}?['stackId'])),equals(${body('Read_stack')}?['tags']?['runId'],${runId('Read_current')}),equals(${body('Read_stack')}?['tags']?['application'],'called-it'),equals(${body('Read_stack')}?['tags']?['environment'],'test'),equals(toLower(${body('Read_stack')}?['properties']?['deploymentScope']),toLower(${param('runGroupId')})),equals(${body('Read_stack')}?['properties']?['denySettings']?['mode'],'none'),contains(${array(Object.values(stackStates).flat())},${stackPhase('Read_stack')}))`,
               {
                 Deployment_busy: condition(
                   `contains(${array(stackStates.inFlight)},${stackPhase('Read_stack')})`,
@@ -350,8 +355,8 @@ function cleanup() {
 export function watchdogDefinition() {
   return {
     $schema: 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
-    contentVersion: `${protocol.stateVersion}.0.0.0`,
-    parameters: Object.fromEntries(['stateUrl', 'runGroupId', 'managedGroupId', 'subscriptionId', 'tenantId', 'identityId']
+    contentVersion: protocol.controllerVersion,
+    parameters: Object.fromEntries(['stateUrl', 'runGroupId', 'managedGroupId', 'subscriptionId', 'tenantId', 'identityId', 'controlLocation', 'workloadLocation']
       .map((name) => [name, { type: 'String' }])),
     triggers: {
       Check_expiry: {
@@ -363,7 +368,7 @@ export function watchdogDefinition() {
     actions: {
       Read_state: storage('GET'),
       Idle: condition(
-        `and(equals(${body('Read_state')}?['schemaVersion'],${protocol.stateVersion}),equals(${body('Read_state')}?['subscriptionId'],${param('subscriptionId')}),equals(${body('Read_state')}?['tenantId'],${param('tenantId')}),equals(${body('Read_state')}?['phase'],'Idle'),equals(${body('Read_state')}?['submissions'],json('[]')))`,
+        `and(${validLocations},equals(${body('Read_state')}?['schemaVersion'],${protocol.stateVersion}),equals(${body('Read_state')}?['subscriptionId'],${param('subscriptionId')}),equals(${body('Read_state')}?['tenantId'],${param('tenantId')}),equals(${body('Read_state')}?['phase'],'Idle'),equals(${body('Read_state')}?['submissions'],json('[]')))`,
         {},
         {
           Valid_run: condition(validActive('Read_state'), {

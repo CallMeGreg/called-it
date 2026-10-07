@@ -15,11 +15,14 @@ export function stackPhase(value) {
 
 export function operationUrl(value, provider, resourceId) {
   requireValue(typeof value === 'string' && value.length > 0, 'Missing ARM operation URL.');
+  const region = provider === 'Microsoft.Resources' ? CONFIG.location
+    : provider === 'Microsoft.App' ? CONFIG.workloadLocation : null;
+  requireValue(region, 'Unapproved ARM operation provider.');
   const url = new URL(value, 'https://management.azure.com');
   const path = url.pathname.toLowerCase();
   const subscription = `/subscriptions/${CONFIG.subscriptionId}`;
   const providerRoot = `${subscription}/providers/${provider.toLowerCase()}/`;
-  const regional = `${providerRoot}locations/${CONFIG.location}/`;
+  const regional = `${providerRoot}locations/${region}/`;
   const scoped = `${resourceId.toLowerCase()}/`;
   const rootOperation = ['operations', 'operationStatuses', 'operationResults', 'deploymentStackOperationStatuses', 'deploymentStackOperationResults']
     .some((kind) => path.startsWith(`${providerRoot}${kind.toLowerCase()}/`));

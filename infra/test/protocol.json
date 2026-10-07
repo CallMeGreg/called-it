@@ -1,5 +1,6 @@
 {
   "stateVersion": 2,
+  "controllerVersion": "2.1.0.0",
   "stackStates": {
     "inFlight": ["creating", "validating", "waiting", "deploying", "canceling", "updatingDenyAssignments"],
     "deleting": ["deletingResources", "deleting"],

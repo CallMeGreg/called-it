@@ -10,8 +10,10 @@ The original SwiftUI scaffold and shared OpenAPI contract remain available.
 
 **Phone-playable TEST:** invite-only, simulated shared two-minute rounds, with explicit
 Start/Stop and four-hour automatic expiry. Accounts/results survive Stop in private Azure SQL;
-disposable compute/network/registry resources do not. Expect roughly **$5-6/month while Off**
-plus usage during tests. Follow [the TEST deployment runbook](docs/test-deployment.md);
+disposable compute/network/registry resources do not. SQL and disposable workloads use
+**Central US**; existing keys, identities, and shutdown controls remain in **East US 2**.
+Budget roughly **$6-7/month while Off**, before shared grants, plus usage during tests.
+Follow [the TEST deployment runbook](docs/test-deployment.md);
 the full daily-game dev/prod architecture below is not the TEST resource footprint.
 
 ---

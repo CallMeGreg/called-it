@@ -17,7 +17,8 @@ There is no automatic Start, scheduled deployment, or always-on application comp
 | --- | --- |
 | Subscription | `b5ccc8c6-8222-4b70-83a3-3d7de1e5920f` (`Called It - TEST`) |
 | Tenant | `7b73b4a1-6b8a-47be-b3b0-0f441ef65a34` |
-| Region | East US 2 (`eastus2`) |
+| Retained control / RG and deployment metadata region | East US 2 (`eastus2`) |
+| SQL / disposable workload region | Central US (`centralus`) |
 | Persistent group | `called-it-test-data` |
 | Disposable group | `called-it-test-run` |
 | ACA service-managed group | `called-it-test-managed` |
@@ -28,6 +29,19 @@ explicit isolated `AZURE_CONFIG_DIR`, reject a different current subscription/te
 before mutation, pass `--subscription` on Azure CLI cloud calls, and restrict direct
 ARM requests to the approved subscription. They never call `az account set`.
 Do not bypass these guards or substitute dev/prod parameter files.
+
+`location=eastus2` preserves existing identities, Key Vault, lifecycle storage,
+shutdown workflow/action group, both resource-group metadata locations and named
+subscription/deployment-stack metadata. `workloadLocation=centralus` places the SQL
+server/database and all regional disposable resources together in Central US.
+Private DNS and metric alerts retain their required `global` location. All resource
+names and the shared suffix are unchanged; user-assigned identities can be used
+across these regions without recreation or new federation.
+
+The original SQL provisioning attempt was denied for this subscription in East US 2
+(`ProvisioningDisabled`). Central US was explicitly approved; scripts do not select
+an alternate region automatically. SQL capability/name-availability checks do not
+reserve capacity or guarantee a successful create.
 
 | Retained while Off | Removed by Stop |
 | --- | --- |
@@ -47,6 +61,10 @@ NAT gateway, dedicated ACA profile, or ACA inbound Private Endpoint is provision
 Key Vault and the lifecycle storage account use public Azure service endpoints with
 Entra/RBAC authentication. They are not anonymously readable. This lets the expiry
 controller operate without a permanently billed VNet/private endpoint.
+Their East US 2 availability remains a dependency for secret retrieval, lifecycle
+state and automatic shutdown. The split is not a multi-region failover design.
+Cross-region control/secret traffic can add small latency and bandwidth charges;
+SQL queries and the private endpoint stay with the application in Central US.
 
 ## IaC and identities
 
@@ -108,6 +126,40 @@ silently registers providers. Foundation redeployment preserves SQL data, identi
 names, existing lifecycle state, and the budget's original start date. Do foundation
 maintenance while TEST is Off. Unexpected preexisting group ownership is rejected.
 
+### Retry an incomplete bootstrap
+
+An unsuccessful root deployment can leave owned identities, KV, storage, the
+controller and alerts in place without usable foundation outputs or a state blob.
+Do not delete their resource group, change the shared suffix, purge/recreate KV,
+or move those resources to recover. Before the initial region correction, the
+operator confirmed that the exact SQL server resource was **404** and its original
+global name remained available; absence of a database alone would not prove that.
+An existing SQL server in another region is a separate migration/recovery decision,
+not an in-place location update or permission to choose a new name.
+
+With the reviewed split-region revision and the same isolated operator context:
+
+```bash
+# Providers are already registered; this reconciles the same owned foundation.
+node scripts/test/lifecycle.mjs bootstrap
+```
+
+The subscription deployment remains `called-it-test-foundation` in **East US 2**;
+changing that deployment's `--location` would conflict with its existing metadata.
+The helper explicitly supplies `location=eastus2` and `workloadLocation=centralus`
+to Bicep. It retries the deployment **before** requiring outputs, reads outputs only
+after success, preserves the existing budget start, and creates state with
+`If-None-Match: *`. An existing schema-v2 state blob is read/validated, never reset.
+Missing outputs are not replaced with guessed values.
+
+Require the complete bootstrap, dependent RBAC/budget and blob initialization to
+succeed before publishing secrets or starting workloads. Until initialization, a
+watchdog `Read_state`/`NotFound` failure is expected; do not disable alerts or bypass
+heartbeat checks. After success, wait for a healthy five-minute tick. Keep any
+already-created owner bundle and publish it as below rather than regenerating keys.
+
+### Configure access and publish invites
+
 Bootstrap emits only the non-secret deployer client ID, tenant ID, and subscription
 ID. In GitHub Settings, create environment **test**, set its environment variable
 `AZURE_TEST_CLIENT_ID` to that output, and configure approvers/allowed branches where
@@ -167,7 +219,8 @@ Start performs these phases, in order:
 2. Lease the state blob; require Idle; allocate a unique run and persist Starting plus
    its four-hour expiry **before** provisioning paid resources. Before **each** stack
    PUT, persist its submission/client-request IDs and the prior deployment generation.
-3. Compile/apply Bicep network/registry stage. Build the migration and API+web images
+3. Compile/apply the Central US Bicep network/registry stage while keeping stack
+   metadata in East US 2. Build the migration and API+web images
    on the runner, push to ACR, resolve immutable digests.
 4. Apply the Job stage, start one execution inside the VNet, and require success.
    An empty 202 Job-start response is followed through its validated ARM operation URL
@@ -177,6 +230,10 @@ Start performs these phases, in order:
 5. Apply the API stage with the agreed settings, require database readiness, a served
    HTML page and its same-origin JavaScript assets, then record Running and print the
    non-secret HTTPS URL/run ID.
+
+Start also verifies the actual SQL server is in Central US and remains
+public-network Disabled, the watchdog is in East US 2 with both expected region
+parameters, and the phone URL is an HTTPS `*.centralus.azurecontainerapps.io` origin.
 
 A failed Start attempts the same guarded Stop. A lost/cancelled runner cannot disable
 the independent expiry watchdog. A Start against a non-Idle state fails rather than
@@ -328,14 +385,21 @@ The CLI understands the stack API's documented lowercase/camelCase states, inclu
 `waiting`, `updatingDenyAssignments` and `deletingResources`; an unknown state is never
 treated as permission to delete. Job and stack LRO URLs must stay on the approved ARM
 host/subscription and the expected provider/region or run resource scope. Tracking
+regional `Microsoft.Resources` stack/deployment LROs uses **East US 2**, matching
+their control metadata; regional `Microsoft.App` Job LROs use **Central US**.
+Scoped/nonregional operation URLs must still identify the approved subscription,
+provider and resource path. The regions are not interchangeable. Tracking
 regional LRO endpoints requires resource-group-level permissions, already supplied by
 the deployer's Contributor and cleanup identity's read grants, rather than broadening
 them to subscription Contributor. Azure CLI tokens are cached independently per
 audience only until their actual `expires_on` timestamp minus 60 seconds.
 
-Use the matching schema-v2 CLI **and** watchdog before the first launch. Older state
-blobs/writers are rejected; they are not silently upgraded because they may have
-unrecorded in-flight requests. Start/Extend also verify the watchdog protocol version.
+The split-region controller definition is **2.1.0.0**; durable blob state remains
+**schema v2**. Redeploy the matching foundation/controller before Start/Extend.
+Both region parameters and the controller version are checked, so the older 2.0.0.0
+definition is not accepted for a new launch. Existing schema-v2 state is preserved;
+schema-v1 blobs/writers are still rejected, not silently upgraded, because they may
+have unrecorded in-flight requests.
 
 The watchdog and Owner email/budget alerts are safeguards, **not a hard billing
 cap or availability guarantee**. Azure outages, missed ticks, deleted/disabled
@@ -361,21 +425,37 @@ RBAC propagation, network reachability or the deployed WDL service behavior.
 
 ## Cost model and limitations
 
-Approximate public USD retail prices for East US 2, excluding tax/agreements:
+Public USD retail unit rates checked **2026-10-07**, excluding tax/agreements.
+Central US is the workload region; retained controls remain in East US 2. Some
+network/DNS meters have a global catalog rate, not a different resource location.
 
-| Cost source | Planning estimate |
-| --- | --- |
-| Retained SQL Basic, 5 DTU / 2 GiB | $0.161/day, approximately $4.90/month |
-| Retained watchdog, blob, KV, two metric alerts | Around $1/month at this scale; action/request based |
-| **Off baseline** | **About $5-6/month**, not zero |
-| Disposable external custom-VNet ACA load balancer | $0.025/hour |
-| Two ACA-managed Standard public IPv4 addresses | $0.005/hour each |
-| SQL Private Endpoint | $0.01/hour, plus traffic |
-| ACR Basic while provisioned | $0.1666/day, about $5.07/month if accidentally retained |
-| Private DNS | $0.50/zone-month plus queries; check billing granularity for short runs |
-| One active 0.25 CPU / 0.5 GiB replica | Approximately $0.027/active hour before shared grants |
-| Log Analytics | $2.76/GiB beyond shared allowances; daily cap set to 0.1 GiB |
-| KV / built-in Logic App actions | $0.03/10,000 KV operations; $0.000025/action |
+| Cost source / retail meter | Rate catalog | Planning estimate |
+| --- | --- | --- |
+| Retained SQL Single Basic, `B DTU`, 5 DTU / 2 GiB | Central US | $0.161/day, approximately $4.90/month |
+| Retained KV, `Operations` | East US 2 | $0.03/10,000 operations |
+| Retained Logic Apps, `Consumption Built-in Actions` | East US 2 | $0.000025/trigger or action beyond shared allowance |
+| Two retained Azure Monitor `Alerts Metric Monitored` series | East US 2 | $0.10/series-month beyond shared allowance; $0.20 for two |
+| **Off baseline after complete bootstrap** | Split regions | **Budget $6-7/month before shared grants**, including tiny blob usage; not zero |
+| Disposable Standard load balancer, included LB/outbound rules | Global meter | $0.025/hour plus $0.005/GB processed |
+| Two ACA-managed Standard IPv4 Static Public IPs | Central US | $0.005/hour each |
+| SQL `Standard Private Endpoint` | Global meter | $0.01/hour plus $0.01/GB ingress/egress at the first traffic tier |
+| ACR `Basic Registry Unit` | Central US | $0.1666/day, about $5.07/month if accidentally retained |
+| Private DNS zone / queries | Global meter | $0.50/zone-month plus $0.40/million queries; check short-run granularity |
+| ACA Standard vCPU / memory active usage | Central US | $0.000024/vCPU-second + $0.000003/GiB-second; $0.027/hour for 0.25 CPU / 0.5 GiB |
+| ACA Standard Requests | Central US | $0.40/million beyond shared allowance |
+| Log Analytics, `Analytics Logs Data Ingestion` | Central US | $2.76/GB beyond shared allowance; daily cap 0.1 GB |
+
+A healthy Idle tick executes four built-in actions plus the recurrence trigger.
+At one tick every five minutes, allow roughly $1.08 per 30 days before shared
+Logic Apps grants, plus up to $0.20 for the two alert series and small blob/KV usage.
+The more conservative Off estimate includes these controls; the location split adds
+no new always-on service. More active/reconciliation ticks can cost more.
+
+The catalog identifies the selected SQL meter as `cae64797-9ecf-4906-b517-6238c80c045f`,
+ACR Basic as `5c9e7a65-5784-494c-9718-7749d4075dd9`, the Standard LB rule meter as
+`27827eb0-7f60-4928-940b-f5fe15e7a4cb`, and the Standard PE as
+`e6ab7238-e433-4fe0-a2b2-2b2564df2cdb`. Match the region, SKU and tier as well as
+the meter ID when refreshing rates; global and regional entries can share an ID.
 
 Network plus a prorated registry is roughly $0.052/run-hour, plus active app/Job
 execution. A four-hour light run is roughly **$0.32 plus DNS, logs, traffic, requests,
@@ -413,6 +493,12 @@ References: [Azure retail prices](https://prices.azure.com/api/retail/prices),
 [blob leases](https://learn.microsoft.com/rest/api/storageservices/lease-blob),
 [budget notifications](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-acm-create-budgets),
 [daily log caps](https://learn.microsoft.com/azure/azure-monitor/logs/daily-cap).
+
+Region/retry references:
+[deployment name/location binding](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deploy-to-subscription#deployment-location-and-name),
+[resource-group metadata locations](https://learn.microsoft.com/azure/azure-resource-manager/management/manage-resource-groups-portal#what-is-a-resource-group),
+[cross-region user-assigned identities](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/managed-identities-faq#can-the-same-managed-identity-be-used-across-multiple-regions),
+[private endpoint region requirements](https://learn.microsoft.com/azure/private-link/private-endpoint-overview).
 
 ## Local validation
 

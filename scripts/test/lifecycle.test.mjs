@@ -37,11 +37,12 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
       return { status: 200, body: { value: [{ properties: { status: 'Succeeded', endTime: TEST_NOW.toISOString() } }] } };
     }
     if (path.startsWith(`${FOUNDATION.watchdogId}?`)) {
-      return { status: 200, body: { properties: {
-        state: 'Enabled', definition: { contentVersion: '2.0.0.0', triggers: { Check_expiry: {
+      return { status: 200, body: { location: CONFIG.location, properties: {
+        state: 'Enabled', definition: { contentVersion: PROTOCOL.controllerVersion, triggers: { Check_expiry: {
           recurrence: { frequency: 'Minute', interval: 5 }, runtimeConfiguration: { concurrency: { runs: 1 } },
         } } },
         parameters: Object.fromEntries(Object.entries({
+          controlLocation: CONFIG.location, workloadLocation: CONFIG.workloadLocation,
           stateUrl: FOUNDATION.stateUrl, runGroupId: GROUP_ID, managedGroupId: MANAGED_GROUP_ID,
           subscriptionId: CONFIG.subscriptionId, tenantId: CONFIG.tenantId,
         }).map(([key, value]) => [key, { value }])),
@@ -50,7 +51,7 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
     if (path.startsWith(`${GROUP_ID}/resources?`)) return { status: 200, body: { value: stack?.properties.resources ?? [] } };
     if (path.startsWith(`${MANAGED_GROUP_ID}?`)) return { status: managed ? 200 : 404 };
     if (path.startsWith(`${FOUNDATION.sqlServerId}?`)) {
-      return { status: 200, body: { properties: { publicNetworkAccess: 'Disabled' } } };
+      return { status: 200, body: { location: CONFIG.workloadLocation, properties: { publicNetworkAccess: 'Disabled' } } };
     }
     if (path.includes('/Microsoft.Insights/metricAlerts/')) {
       return { status: 200, body: { properties: { enabled: true, scopes: [FOUNDATION.watchdogId] } } };
@@ -73,7 +74,7 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
           },
         });
         stack = {
-          id: path.split('?')[0], tags: options.body.tags,
+          id: path.split('?')[0], location: options.body.location, tags: options.body.tags,
           properties: {
             ...options.body.properties, provisioningState: 'succeeded', deploymentId,
             correlationId: `10000000-0000-0000-0000-${String(generation).padStart(12, '0')}`,
@@ -81,7 +82,7 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
             outputs: Object.fromEntries(Object.entries({
               registryName, registryServer: `${registryName}.azurecr.io`,
               migrationJobId: `${GROUP_ID}/providers/Microsoft.App/jobs/cit-test-${run.slice(0, 12)}-migrate`,
-              appUrl: 'https://phone.example.azurecontainerapps.io',
+              appUrl: 'https://phone.example.centralus.azurecontainerapps.io',
             }).map(([name, value]) => [name, { value }])),
           },
         };
@@ -123,6 +124,12 @@ test('Start provisions network, builds digests, migrates privately, then publish
   assert.equal(running.phase, 'Running');
   const stages = requests.filter(({ method }) => method === 'PUT');
   assert.equal(stages.length, 3);
+  for (const stage of stages) {
+    assert.equal(stage.body.location, 'eastus2');
+    assert.equal(stage.body.properties.parameters.location.value, 'centralus');
+    assert.equal(stage.body.properties.parameters.foundation.value.location, 'eastus2');
+    assert.equal(stage.body.properties.parameters.foundation.value.workloadLocation, 'centralus');
+  }
   assert.equal(stages[0].body.properties.parameters.apiImage.value, '');
   assert.equal(stages[0].body.properties.parameters.migrationImage.value, '');
   assert.match(stages[1].body.properties.parameters.migrationImage.value, /@sha256:/);
@@ -149,17 +156,39 @@ test('failed migration never publishes an app and invokes guarded cleanup', asyn
   assert.ok(requests.some(({ method }) => method === 'DELETE'));
 });
 
-test('Start requires a watchdog that understands the current durable submission protocol', async () => {
-  const { lifecycle, azure, requests } = fakeLifecycle();
-  const send = azure.arm;
-  azure.arm = async (path, options) => {
-    const result = await send(path, options);
-    if (path.startsWith(`${FOUNDATION.watchdogId}?`)) result.body.properties.definition.contentVersion = '1.0.0.0';
-    return result;
-  };
-  await assert.rejects(lifecycle.start(), /submission-ledger version/);
-  assert.equal(azure.state.phase, 'Idle');
-  assert.equal(requests.some(({ method }) => method === 'PUT'), false);
+test('Start and Extend require the split-region controller protocol, not an older watchdog', async () => {
+  for (const version of [undefined, '1.0.0.0', '2.0.0.0']) {
+    const { lifecycle, azure, requests } = fakeLifecycle();
+    const send = azure.arm;
+    azure.arm = async (path, options) => {
+      const result = await send(path, options);
+      if (path.startsWith(`${FOUNDATION.watchdogId}?`)) result.body.properties.definition.contentVersion = version;
+      return result;
+    };
+    await assert.rejects(lifecycle.start(), /controller protocol/);
+    await assert.rejects(lifecycle.extend(RUN_ID), /controller protocol/);
+    assert.equal(azure.state.phase, 'Idle');
+    assert.equal(requests.some(({ method }) => method === 'PUT'), false);
+  }
+});
+
+test('Start rejects SQL/control-region drift and mismatched watchdog workload scope before a PUT', async () => {
+  for (const fault of ['sql', 'controller', 'controlLocation', 'workloadLocation']) {
+    const { lifecycle, azure, requests } = fakeLifecycle();
+    const send = azure.arm;
+    azure.arm = async (path, options) => {
+      const response = await send(path, options);
+      if (fault === 'sql' && path.startsWith(`${FOUNDATION.sqlServerId}?`)) response.body.location = CONFIG.location;
+      if (path.startsWith(`${FOUNDATION.watchdogId}?`)) {
+        if (fault === 'controller') response.body.location = CONFIG.workloadLocation;
+        else if (fault !== 'sql') response.body.properties.parameters[fault].value = 'westus';
+      }
+      return response;
+    };
+    await assert.rejects(lifecycle.start(), /region|scope/);
+    assert.equal(azure.state.phase, 'Idle');
+    assert.equal(requests.some(({ method }) => method === 'PUT'), false);
+  }
 });
 
 test('Start does not call an HTML shell healthy when a required JavaScript asset is missing', async (context) => {
@@ -197,10 +226,11 @@ test('Stop needs exact run confirmation and cannot target a new run', async (con
 test('ownership inventory rejects persistent resources, unknown scope, deny settings and missing inventory', () => {
   const state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
   const stack = {
-    id: state.stackId, tags: { application: 'called-it', environment: 'test', runId: RUN_ID },
+    id: state.stackId, location: CONFIG.location, tags: { application: 'called-it', environment: 'test', runId: RUN_ID },
     properties: { deploymentScope: GROUP_ID, denySettings: { mode: 'none' }, resources: [] },
   };
   assert.doesNotThrow(() => assertOwnedStack(stack, state));
+  assert.throws(() => assertOwnedStack({ ...stack, location: CONFIG.workloadLocation }, state), /metadata region/);
   for (const properties of [
     { resources: [{ id: FOUNDATION.sqlServerId }] },
     { deploymentScope: DATA_GROUP_ID }, { denySettings: { mode: 'denyDelete' } }, { resources: undefined },
@@ -387,7 +417,7 @@ test('empty 202 Job start follows Location to the final execution before status 
   const { azure, lifecycle, requests } = fakeLifecycle();
   azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
   const jobId = `${GROUP_ID}/providers/Microsoft.App/jobs/test-migrate`;
-  const url = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.App/locations/eastus2/operationResults/start-123?api-version=2025-01-01`;
+  const url = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.App/locations/centralus/operationResults/start-123?api-version=2025-01-01`;
   const send = azure.arm;
   let polls = 0;
   azure.arm = async (path, options = {}) => {
@@ -407,7 +437,7 @@ test('Job start prefers Azure-AsyncOperation, then retrieves the saved Location 
   const { azure, lifecycle, requests } = fakeLifecycle();
   azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
   const jobId = `${GROUP_ID}/providers/Microsoft.App/jobs/test-migrate`;
-  const root = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.App/locations/eastus2`;
+  const root = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.App/locations/centralus`;
   const statusUrl = `${root}/operationStatuses/start-123?api-version=2025-01-01`;
   const resultUrl = `${root}/operationResults/start-123?api-version=2025-01-01`;
   const send = azure.arm;
@@ -453,7 +483,8 @@ test('Job start rejects foreign Location headers and stops polling after ownersh
   const jobId = `${GROUP_ID}/providers/Microsoft.App/jobs/test-migrate`;
   for (const url of [
     'https://example.org/steal',
-    'https://management.azure.com/subscriptions/another/providers/Microsoft.App/locations/eastus2/operations/1?api-version=2025-01-01',
+    'https://management.azure.com/subscriptions/another/providers/Microsoft.App/locations/centralus/operations/1?api-version=2025-01-01',
+    `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.App/locations/eastus2/operations/1?api-version=2025-01-01`,
   ]) {
     const { azure, lifecycle } = fakeLifecycle();
     azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });

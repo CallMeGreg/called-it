@@ -13,6 +13,7 @@ const actions = actionMap(definition);
 const state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
 const context = (observed = state, current = state) => ({
   parameters: {
+    controlLocation: CONFIG.location, workloadLocation: CONFIG.workloadLocation,
     stateUrl: FOUNDATION.stateUrl, runGroupId: GROUP_ID, managedGroupId: MANAGED_GROUP_ID,
     subscriptionId: CONFIG.subscriptionId, tenantId: CONFIG.tenantId,
     identityId: 'non-secret-test-identity',
@@ -28,7 +29,8 @@ const context = (observed = state, current = state) => ({
 
 test('checked-in watchdog JSON exactly matches its source and uses a five-minute single-run recurrence', () => {
   assert.deepEqual(JSON.parse(readFileSync(new URL('../../infra/test/watchdog.json', import.meta.url))), definition);
-  assert.equal(definition.contentVersion, `${PROTOCOL.stateVersion}.0.0.0`);
+  assert.equal(definition.contentVersion, PROTOCOL.controllerVersion);
+  assert.equal(state.schemaVersion, 2);
   assert.equal(definition.triggers.Check_expiry.recurrence.interval, 5);
   assert.equal(definition.triggers.Check_expiry.runtimeConfiguration.concurrency.runs, 1);
 });
@@ -93,14 +95,31 @@ test('generated active-state predicate rejects wrong subscription, stack scope a
   ]) assert.equal(evaluate(actions.Valid_run.expression, context({ ...state, ...patch })), false);
 });
 
+test('controller region mismatches fail closed for both Idle and active schema-v2 state', () => {
+  for (const field of ['controlLocation', 'workloadLocation']) {
+    for (const value of [undefined, 'westus']) {
+      const idle = context(idleState(TEST_NOW));
+      idle.parameters[field] = value;
+      assert.equal(evaluate(actions.Idle.expression, idle), false);
+      const active = context();
+      active.parameters[field] = value;
+      assert.equal(evaluate(actions.Valid_run.expression, active), false);
+    }
+  }
+  assert.equal(evaluate(actions.Idle.expression, context(idleState(TEST_NOW))), true);
+});
+
 test('generated teardown rejects foreign resources and requires actual inventory and stack ownership', () => {
   const ctx = context();
   ctx.bodies.Read_stack = {
-    id: state.stackId, tags: { runId: RUN_ID, application: 'called-it', environment: 'test' },
+    id: state.stackId, location: CONFIG.location, tags: { runId: RUN_ID, application: 'called-it', environment: 'test' },
     properties: { resources: [], deploymentScope: GROUP_ID, denySettings: { mode: 'none' }, provisioningState: 'succeeded' },
   };
   ctx.bodies.Foreign_resources = [];
   assert.equal(evaluate(actions.Owned_stack.expression, ctx), true);
+  ctx.bodies.Read_stack.location = CONFIG.workloadLocation;
+  assert.equal(evaluate(actions.Owned_stack.expression, ctx), false);
+  ctx.bodies.Read_stack.location = CONFIG.location;
   assert.equal(evaluate(actions.Foreign_resources.inputs.where, { ...ctx, item: { id: FOUNDATION.sqlServerId } }), true);
   ctx.bodies.Foreign_resources = [{ id: FOUNDATION.sqlServerId }];
   assert.equal(evaluate(actions.Owned_stack.expression, ctx), false);
@@ -219,7 +238,7 @@ test('WDL requires the associated new deployment generation, not new tags and an
   const ctx = context(intent, intent);
   ctx.bodies.Find_pending = [entry];
   ctx.bodies.Read_candidate = {
-    id: intent.stackId, tags: { application: 'called-it', environment: 'test', runId: RUN_ID, submissionId: entry.id },
+    id: intent.stackId, location: CONFIG.location, tags: { application: 'called-it', environment: 'test', runId: RUN_ID, submissionId: entry.id },
     properties: {
       deploymentScope: GROUP_ID, parameters: { submissionId: { value: entry.id } },
       correlationId: oldStackCorrelation, deploymentId: priorId, provisioningState: 'succeeded',
@@ -258,5 +277,23 @@ test('JS and WDL operation URL guards admit provider LRO paths but never another
     entry.operationUrl = entry.operationUrl.replace(CONFIG.subscriptionId, 'another-subscription');
     assert.throws(() => operationUrl(entry.operationUrl, 'Microsoft.Resources', state.stackId));
     assert.equal(evaluate(actions.Safe_operation_url.expression, ctx), false);
+  }
+  entry.operationUrl = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/centralus/deploymentStackOperationStatuses/operation-1?api-version=2024-03-01`;
+  assert.throws(() => operationUrl(entry.operationUrl, 'Microsoft.Resources', state.stackId));
+  assert.equal(evaluate(actions.Safe_operation_url.expression, ctx), false);
+});
+
+test('regional LRO allowlists distinguish control-plane stacks from workload Jobs', () => {
+  const jobId = `${GROUP_ID}/providers/Microsoft.App/jobs/test-migrate`;
+  for (const [provider, resource, region] of [
+    ['Microsoft.Resources', state.stackId, 'eastus2'],
+    ['Microsoft.App', jobId, 'centralus'],
+  ]) {
+    const url = (location) => `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/${provider}/locations/${location}/operationResults/result?api-version=2025-01-01`;
+    assert.doesNotThrow(() => operationUrl(url(region), provider, resource));
+    for (const other of ['westus', region === 'centralus' ? 'eastus2' : 'centralus']) {
+      assert.throws(() => operationUrl(url(other), provider, resource), /Refusing/);
+    }
+    assert.doesNotThrow(() => operationUrl(`${resource}/operationResults/result?api-version=2025-01-01`, provider, resource));
   }
 });

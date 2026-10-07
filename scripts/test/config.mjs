@@ -20,7 +20,7 @@ export function stackId(runId) {
 
 export function assertFoundation(value) {
   requireValue(value && typeof value === 'object', 'Missing TEST foundation outputs. Run operator bootstrap first.');
-  for (const key of ['subscriptionId', 'tenantId', 'location', 'dataGroup', 'runGroup', 'managedGroup']) {
+  for (const key of ['subscriptionId', 'tenantId', 'location', 'workloadLocation', 'dataGroup', 'runGroup', 'managedGroup']) {
     requireValue(value[key] === CONFIG[key], `Foundation ${key} does not match the approved TEST scope.`);
   }
   for (const key of ['runtimeIdentityId', 'migratorIdentityId', 'sqlServerId', 'watchdogId']) {
@@ -45,6 +45,14 @@ export function assertFoundation(value) {
   requireValue(value.sqlServerId === `${DATA_GROUP_ID}/providers/Microsoft.Sql/servers/${value.sqlServerName}`
     && value.sqlFqdn === `${value.sqlServerName}.database.windows.net`, 'SQL identity and hostname do not match.');
   requireValue(value.databaseName === 'calledit', 'Invalid TEST database name.');
+  return value;
+}
+
+export function assertAppUrl(value) {
+  requireValue(typeof value === 'string'
+    && /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.azurecontainerapps\.io$/.test(value)
+    && value.endsWith(`.${CONFIG.workloadLocation}.azurecontainerapps.io`),
+  'Azure returned a phone URL outside the approved TEST workload region.');
   return value;
 }
 

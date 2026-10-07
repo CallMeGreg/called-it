@@ -7,6 +7,10 @@ through a deployment stack. Start is explicit, expiry defaults to four hours, an
 accounts/results. There is no TEST SQL password, public firewall exception, or manual database
 user prerequisite.
 
+TEST pins `location=eastus2` for retained controls and resource-group/deployment metadata,
+and `workloadLocation=centralus` for SQL and disposable regional resources. Names, identity IDs
+and the shared naming suffix are unchanged. This is not a dev/prod region change.
+
 The rest of this page describes the **existing dev/prod** resource-group-scoped deployment.
 Do not use its full-platform sizing, SQL grants or manual commands for TEST.
 One dev/prod deployment provisions the full platform:

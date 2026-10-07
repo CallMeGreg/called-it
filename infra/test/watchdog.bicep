@@ -1,4 +1,7 @@
+@allowed(['eastus2'])
 param location string
+@allowed(['centralus'])
+param workloadLocation string
 param tags object
 param identityId string
 param stateUrl string
@@ -18,6 +21,8 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = {
     state: 'Enabled'
     definition: loadJsonContent('watchdog.json')
     parameters: {
+      controlLocation: { value: location }
+      workloadLocation: { value: workloadLocation }
       stateUrl: { value: stateUrl }
       runGroupId: { value: '/subscriptions/${subscription().subscriptionId}/resourceGroups/${config.runGroup}' }
       managedGroupId: { value: '/subscriptions/${subscription().subscriptionId}/resourceGroups/${config.managedGroup}' }

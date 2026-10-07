@@ -2,6 +2,7 @@
   "subscriptionId": "b5ccc8c6-8222-4b70-83a3-3d7de1e5920f",
   "tenantId": "7b73b4a1-6b8a-47be-b3b0-0f441ef65a34",
   "location": "eastus2",
+  "workloadLocation": "centralus",
   "dataGroup": "called-it-test-data",
   "runGroup": "called-it-test-run",
   "managedGroup": "called-it-test-managed",

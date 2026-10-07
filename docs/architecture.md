@@ -14,8 +14,12 @@ identities and a small independent expiry controller. A deployment stack in `cal
 owns the API/static site, private SQL access path, ACR, migration Job and Consumption ACA
 environment; Stop removes these and verifies Azure's managed LB/public-IP group also disappears.
 The runtime SQL identity has DML permissions only; a separate in-VNet Job applies migrations.
-There is no always-on Workers/Redis/SMS/push footprint. Off retains approximately $5-6/month of
-data/controller costs, rather than claiming zero spend.
+SQL and the disposable app/network are in **Central US**. Existing Key Vault, identities,
+lifecycle storage and shutdown controls remain in **East US 2**, as do resource-group and
+deployment metadata. This preserves existing IDs and avoids recreating retained resources.
+It is not multi-region HA: Start/secret retrieval/expiry still depend on the retained controls.
+There is no always-on Workers/Redis/SMS/push footprint. Budget approximately **$6-7/month
+while Off**, before shared grants, for retained data/controller costs rather than zero spend.
 
 The exact scope, phases, privileges, configuration, cost caveats and operator commands are in
 [the TEST runbook](test-deployment.md). [TEST API behavior](test-api.md) specifies invite

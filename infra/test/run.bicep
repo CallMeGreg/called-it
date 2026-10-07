@@ -6,8 +6,9 @@ param subscriptionId string = any(subscription().subscriptionId)
 @allowed(['called-it-test-run'])
 param runGroupName string = any(resourceGroup().name)
 
-@allowed(['eastus2'])
-param location string = 'eastus2'
+@allowed(['centralus'])
+@description('Regional workload resources only; deployment-stack metadata remains in East US 2.')
+param location string = 'centralus'
 
 @minLength(32)
 @maxLength(32)

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { Azure, sleep } from './azure.mjs';
-import { CONFIG, GROUP_ID, DATA_GROUP_ID, MANAGED_GROUP_ID, STACK_API, assertDigest, requireValue, stackId } from './config.mjs';
+import { CONFIG, GROUP_ID, DATA_GROUP_ID, MANAGED_GROUP_ID, STACK_API, assertAppUrl, assertDigest, requireValue, stackId } from './config.mjs';
 import { StateStore, idleState, startState, extendState, stopState, validateState, pendingSubmission, beginSubmission, updateSubmission, validDeploymentId } from './state.mjs';
 import { hashes, readBundle, parseBundle, writePrivate, assertBundleUpdate } from './invites.mjs';
 import { PROTOCOL, STACK_STATES, stackPhase, responseOperationUrl, responseOperationUrls, operationUrl, operationPhase, armPath } from './operations.mjs';
@@ -21,6 +21,7 @@ const printable = (state) => ({
 export function assertOwnedStack(stack, state) {
   validateState(state);
   requireValue(stack?.id?.toLowerCase() === state.stackId.toLowerCase(), 'Unexpected deployment stack ID.');
+  requireValue(stack.location === CONFIG.location, 'Unexpected deployment-stack metadata region.');
   requireValue(stack.tags?.runId === state.runId && stack.tags?.application === 'called-it'
     && stack.tags?.environment === 'test', 'Stack ownership tags do not match this TEST run.');
   requireValue(stack.properties?.deploymentScope?.toLowerCase() === GROUP_ID.toLowerCase()
@@ -78,13 +79,15 @@ export class Lifecycle {
   async watcherReady() {
     const workflow = (await this.azure.arm(`${this.foundation.watchdogId}?api-version=2019-05-01`)).body;
     requireValue(workflow?.properties?.state === 'Enabled', 'The independent expiry watchdog is not enabled. Refusing Start/Extend.');
-    requireValue(workflow.properties.definition?.contentVersion === `${PROTOCOL.stateVersion}.0.0.0`,
-      'The expiry watchdog does not support this submission-ledger version. Deploy the matching foundation before Start/Extend.');
+    requireValue(workflow.location === CONFIG.location, 'The expiry watchdog is outside the retained control region.');
+    requireValue(workflow.properties.definition?.contentVersion === PROTOCOL.controllerVersion,
+      'The expiry watchdog does not support this controller protocol. Deploy the matching foundation before Start/Extend.');
     requireValue(workflow.properties.definition?.triggers?.Check_expiry?.recurrence?.interval === 5
       && workflow.properties.definition.triggers.Check_expiry.recurrence.frequency === 'Minute'
       && workflow.properties.definition.triggers.Check_expiry.runtimeConfiguration?.concurrency?.runs === 1,
       'The expiry watchdog schedule differs from the reviewed five-minute guard.');
     for (const [key, expected] of Object.entries({
+      controlLocation: CONFIG.location, workloadLocation: CONFIG.workloadLocation,
       stateUrl: this.foundation.stateUrl, runGroupId: GROUP_ID, managedGroupId: MANAGED_GROUP_ID,
       subscriptionId: CONFIG.subscriptionId, tenantId: CONFIG.tenantId,
     })) {
@@ -159,7 +162,8 @@ export class Lifecycle {
             deploymentScope: GROUP_ID,
             template,
             parameters: Object.fromEntries(Object.entries({
-              runId, submissionId: submission.id, foundation: this.foundation, migrationImage, apiImage, secretUris,
+              location: CONFIG.workloadLocation, runId, submissionId: submission.id,
+              foundation: this.foundation, migrationImage, apiImage, secretUris,
             }).map(([name, value]) => [name, { value }])),
           },
         },
@@ -302,6 +306,8 @@ export class Lifecycle {
   async start() {
     await this.watcherReady();
     const sql = (await this.azure.arm(`${this.foundation.sqlServerId}?api-version=2023-08-01`)).body;
+    requireValue(sql?.location === CONFIG.workloadLocation,
+      'SQL is outside the approved TEST workload region. Repair the retained foundation through Bicep before Start.');
     requireValue(sql?.properties?.publicNetworkAccess === 'Disabled',
       'SQL public network access is not Disabled. Repair the retained foundation through Bicep before Start.');
     await this.verifyOff();
@@ -323,7 +329,7 @@ export class Lifecycle {
       const migration = await this.applyRun(run.runId, { migrationImage });
       await this.migrate(migration.migrationJobId, run.runId);
       const app = await this.applyRun(run.runId, { migrationImage, apiImage, secretUris: secrets });
-      requireValue(/^https:\/\/[a-z0-9.-]+\.azurecontainerapps\.io$/.test(app.appUrl), 'Azure returned an unexpected phone URL.');
+      assertAppUrl(app.appUrl);
       await this.checkWeb(app.appUrl, run.runId);
       await this.store.locked(async (current, write) => {
         requireValue(current.runId === run.runId && current.phase === 'Starting'
@@ -488,14 +494,15 @@ async function providers(azure, register) {
   }
 }
 
-async function bootstrap(azure, register) {
+export async function bootstrap(azure, register) {
   const account = await azure.guard();
   requireValue(account.user?.type === 'user', 'Foundation bootstrap requires the authorized human operator, not the workflow UAMI.');
   for (const [name, lifecycle] of [[CONFIG.dataGroup, 'persistent'], [CONFIG.runGroup, 'disposable']]) {
     const existing = await azure.arm(`/subscriptions/${CONFIG.subscriptionId}/resourceGroups/${name}?api-version=2024-03-01`, { allowed: [200, 404] });
     requireValue(existing.status === 404 || (existing.body.tags?.application === 'called-it'
-      && existing.body.tags?.environment === 'test' && existing.body.tags?.lifecycle === lifecycle),
-    'Refusing to adopt a preexisting resource group without matching TEST ownership tags.');
+      && existing.body.tags?.environment === 'test' && existing.body.tags?.lifecycle === lifecycle
+      && existing.body.location === CONFIG.location),
+    'Refusing to adopt a preexisting resource group without matching TEST ownership tags and retained metadata region.');
   }
   await providers(azure, register);
   const token = await azure.token('https://management.azure.com/');
@@ -507,7 +514,7 @@ async function bootstrap(azure, register) {
   await azure.az([
     'deployment', 'sub', 'create', '--name', CONFIG.foundationDeployment, '--location', CONFIG.location,
     '--template-file', 'infra/main.test.bicep', '--parameters', `operatorObjectId=${operatorId}`,
-    `budgetStartDate=${budgetStart}`,
+    `budgetStartDate=${budgetStart}`, `location=${CONFIG.location}`, `workloadLocation=${CONFIG.workloadLocation}`,
   ], { mutate: true });
   const foundation = await azure.foundation();
   const store = new StateStore(azure, foundation.stateUrl);

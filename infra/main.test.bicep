@@ -10,7 +10,12 @@ param subscriptionId string = any(subscription().subscriptionId)
 param tenantId string = any(tenant().tenantId)
 
 @allowed(['eastus2'])
+@description('Retained control resources and resource-group metadata. Do not move existing resources.')
 param location string = 'eastus2'
+
+@allowed(['centralus'])
+@description('Approved private SQL and disposable workload region.')
+param workloadLocation string = 'centralus'
 
 @description('Existing operator object ID; receives access to private owner recovery material.')
 param operatorObjectId string
@@ -111,6 +116,7 @@ module foundation 'test/foundation.bicep' = {
   scope: dataGroup
   params: {
     location: location
+    workloadLocation: workloadLocation
     tenantId: tenantId
     operatorObjectId: operatorObjectId
     tags: tags
