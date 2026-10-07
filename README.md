@@ -136,7 +136,8 @@ npm ci
 npm run playground
 ```
 
-Open the loopback web address printed by the command. The local admin controls let you advance
+Open the loopback web address printed by the command. The clock is intentionally manual:
+it stays frozen until you advance it. The local admin controls let you advance
 the clock, lock a round, choose each question's outcome, and publish results without waiting
 for a real round to finish. Use the existing player screens to see saved picks, results,
 streaks, lifetime scores, and leaderboards change. Reset the demo to start over.

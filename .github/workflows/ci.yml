@@ -53,6 +53,8 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
       - name: Chromium and WebKit phone flows
         run: npm run test:e2e
+      - name: Local playground phone flows (no backend)
+        run: npm run test:playground
 
   images:
     name: API, web, and migration images
