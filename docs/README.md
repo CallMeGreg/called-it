@@ -50,3 +50,21 @@ individual implementation slices must not be promoted to "launch ready."
 
 Use the delivery plan as the release checklist. Preserve the distinction between
 **observed**, **implemented**, **proposed**, and **owner/platform-gated**.
+
+## First implementation progress
+
+| Slice | Current state |
+| --- | --- |
+| Backend guardrails | Integrated: both hosts reject unsafe deployed configuration; identity ownership and OIDC validation tightened; SQL projections replace Redis/in-memory standings; production startup is read-only; live/ready endpoints added. |
+| Azure foundation | Implementation in progress in an isolated workstream; deployment is not authorized. |
+| Competition, native client and public launch | Still gated. The complete timing/outbox/scoring protocol, vendor-backed identity lifecycle, deletion/moderation, notifications and store builds are not delivered by the guardrails slice. |
+
+The integrated backend passes the full solution build and 156 local tests
+(20 domain, 111 application, 25 API). Successful database tests use SQLite, **not
+SQL Server**; no production query-plan/load/concurrency, managed-identity,
+least-privilege, migration/seed, cloud capacity or native-device result is implied.
+
+Deployed SMS and push default to **Disabled**, returning explicit unavailability
+when invoked. All three legacy scheduled workers and stub resolution are rejected
+outside Development. This is intentionally a safe foundation, not a playable
+public service with development adapters hidden behind production configuration.

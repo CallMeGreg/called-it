@@ -37,6 +37,28 @@ not resemble cheating or corrupt progress.
 | P1 | Device registration only writes a SQL row; reminder workers broadcast without consent/deduplication. | Push is neither fully registered nor appropriately targeted. Server-owned installations, preference/TTL checks and a durable dispatcher. |
 | P1 | Deployment converges default hello-world images before updating applications; no readiness/migration gate. | A deployment can replace the real service with a placeholder or incompatible revision. Explicit images, staged provisioning, probes, health verification and rollback. |
 
+### Disposition after the first backend slice
+
+Known-key and implicit development-adapter fallbacks are removed. Both hosts
+validate deployed configuration before database/host work; SMS/push defaults are
+explicitly Disabled, stub resolution and legacy scheduled workers are
+Development-only, and production startup cannot run migrations/seeding.
+
+OIDC now requires issuer/audience/signature/algorithm/expiry and an exact subject;
+login rejects cross-account or unlinked phone/social combinations. This does
+**not** resolve nonce/challenge binding, concurrent verification/session consumption,
+phone recovery, social linking, deletion or authorization lifecycle requirements.
+
+SQL projections now supply standings directly, with bounded database-side reads
+and deterministic ordinal display ranks. Redis/cache publication failure is no
+longer a required component, but outcome-to-score durable replay, chronological
+finality, projection versioning and shared tied ranks are still outstanding.
+
+Readiness now probes core mapped database tables/seeds separately from liveness.
+It is not a proof that every endpoint works, that the migrator is implemented,
+that runtime write grants are correct, or that SQL Server load/concurrency has
+been validated. The remaining P0 release gates above still block public beta.
+
 ## Required identity design
 
 Use an opaque immutable user ID. A phone is a replaceable, verified credential,

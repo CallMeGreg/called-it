@@ -42,6 +42,12 @@ These slices must agree on config names, health routes and which adapters can be
 disabled. An explicitly disabled feature should return an intentional unavailable
 response if called, not silently use a development logger or return success.
 
+**Progress:** the backend guardrails/SQL-read slice is integrated. Production
+initialization is now read-only as well; the migrator/seed lifecycle remains an
+explicit gate. The Azure slice is still in progress. Neither slice implements
+the complete game, privacy flows or native client. See the
+[implementation evidence](README.md#first-implementation-progress).
+
 ### Acceptance matrix for subsequent work
 
 | Area | Required cases |

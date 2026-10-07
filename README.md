@@ -53,6 +53,12 @@ leaderboards avoid making Redis a prerequisite before measured load warrants it.
 Durable scheduling/outbox processing and a store-ready mobile app are delivery
 work, not completed capabilities implied by the architecture diagram.
 
+The first backend slice is integrated: strict deployed configuration, phone/social
+ownership checks, SQL-backed standings, and separate liveness/readiness. Deployed
+hosts no longer migrate/seed the database at startup; a separate approved
+bootstrap is required. SMS, push and legacy scheduled jobs remain intentionally
+disabled by default, so these guardrails do not make the app public-beta ready.
+
 ## Local backend development
 
 Install the **.NET 10 SDK**. Local Development uses SQLite and deliberately
@@ -75,6 +81,9 @@ The baseline solution built locally and its 33 existing tests passed during the
 fair timing, native behavior, cloud capacity or store readiness; some fixtures
 resolve outcomes while picks are still open and must be replaced in the
 competition-integrity phase.
+
+See [current implementation progress](docs/README.md#first-implementation-progress)
+for the guardrail coverage and its remaining validation limits.
 
 ## Infrastructure and clients
 

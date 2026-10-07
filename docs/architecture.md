@@ -199,6 +199,16 @@ an Azure environment named "dev." Production-like configuration must fail closed
 no known signing key, fake social validator, logged OTP, silent push fallback,
 or process-local authoritative leaderboard.
 
+The first backend slice implements those guardrails and SQL projection reads.
+Both API and Workers accept `Sqlite` only in Development; deployed configuration
+requires `SqlServer`, database connection, signing key, server-only contacts
+pepper and Apple/Google audiences. `Sms:Provider` and `Push:Provider` default to
+`Disabled`; explicit `Development` adapters are rejected elsewhere. `Acs` is a
+legacy SMS opt-in, not the chosen verification architecture; `NotificationHubs`
+requires complete configuration. Disabled calls return explicit unavailability.
+`Resolution:UseStub` and all three existing scheduled-worker flags must remain
+false outside Development until their separate release work is completed.
+
 Separate resource bootstrap, image build, database migration/seed, app deployment
 and readiness verification. Deploy immutable image references; never converge an
 existing app back to hello-world. Apply backward-compatible expand/contract schema
@@ -209,6 +219,12 @@ Use liveness for process health and readiness for the ability to serve the
 critical database-backed path. External push/SMS outages should be explicit
 feature failures, not hide database failure or necessarily take healthy gameplay
 offline. Define configuration validation and each readiness dependency separately.
+
+Implemented routes are anonymous `/health/live` (with `/health` as a compatibility
+alias) and `/health/ready`. Readiness checks core schema/seed reads with a bounded
+timeout and generic 503 failures; it never exposes connection details in the
+response. Non-Development startup uses the same read-only prerequisite checks.
+There is still no separately delivered production migrator/seed command.
 
 Defer microservices, Service Bus, Event Grid, Redis, AI question generation and
 multi-region writes. Introduce them only with an observed bottleneck or operational

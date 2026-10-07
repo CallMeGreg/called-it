@@ -13,8 +13,10 @@ have a current estimate and an agreed over-budget response.
 Start with a single-region Container Apps API, a bounded worker process, a small
 Azure SQL database, ACR, managed identities, secrets, and capped observability.
 SQL holds durable leaderboard projections; Redis is not required just because a
-leaderboard exists. Provision Notification Hubs only with an enabled, configured
-push workstream. Defer App Configuration, blob share rendering, Front Door Premium,
+leaderboard exists. The first infrastructure slice does not provision a
+Notification Hub; an intentionally configured existing hub can be integrated
+later, with separate ownership and cost approval. Defer App Configuration, blob
+share rendering, Front Door Premium,
 API Management, Service Bus/Event Grid, AI services, and multi-region replication
 until their specific need and cost are established.
 
