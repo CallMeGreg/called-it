@@ -97,3 +97,40 @@ test('safe Azure errors expose status and code, not service response messages', 
   azure.token = async () => 'not-a-live-token';
   await assert.rejects(azure.arm(`${GROUP_ID}?api-version=2024-03-01`), (error) => error.status === 403 && !error.message.includes('private-secret'));
 });
+
+test('tokens refresh using real expiry minus a margin, independently for each resource', async () => {
+  let now = Date.parse('2026-10-07T00:00:00Z');
+  const calls = [];
+  const azure = new Azure({ now: () => now });
+  azure.verified = true;
+  azure.az = async (args, options) => {
+    assert.equal(options.sensitive, true);
+    assert.equal(options.raw, undefined);
+    assert.ok(args.includes('{accessToken:accessToken,expires_on:expires_on}'));
+    calls.push(args[args.indexOf('--resource') + 1]);
+    return { accessToken: `${calls.length}`.repeat(120), expires_on: Math.floor(now / 1000) + 600 };
+  };
+  const arm = 'https://management.azure.com/';
+  const storage = 'https://storage.azure.com/';
+  const first = await azure.token(arm);
+  assert.equal(await azure.token(arm), first);
+  await azure.token(storage);
+  assert.equal(calls.length, 2);
+  now += 11 * 60_000;
+  assert.notEqual(await azure.token(arm), first);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2], arm);
+  await azure.token(storage);
+  assert.equal(calls.length, 4);
+});
+
+test('tokens without valid Unix expiry never receive a success-shaped cache fallback', async () => {
+  const now = Date.parse('2026-10-07T00:00:00Z');
+  for (const expiry of [undefined, null, '', 'tomorrow', '1e20', -1, 1.5, Infinity, now / 1000 + 30]) {
+    const azure = new Azure({ now: () => now });
+    azure.verified = true;
+    azure.az = async () => ({ accessToken: 'synthetic-test-token'.repeat(10), expires_on: expiry });
+    await assert.rejects(azure.token('https://management.azure.com/'), /expiry|expired/);
+    assert.equal(azure.tokens.size, 0);
+  }
+});

@@ -1,0 +1,8 @@
+{
+  "stateVersion": 2,
+  "stackStates": {
+    "inFlight": ["creating", "validating", "waiting", "deploying", "canceling", "updatingDenyAssignments"],
+    "deleting": ["deletingResources", "deleting"],
+    "terminal": ["succeeded", "failed", "canceled"]
+  }
+}

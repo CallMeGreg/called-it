@@ -22,10 +22,11 @@ export class AzureError extends Error {
 }
 
 export class Azure {
-  constructor({ execute = exec, fetcher = fetch, env = process.env } = {}) {
+  constructor({ execute = exec, fetcher = fetch, env = process.env, now = Date.now } = {}) {
     this.execute = execute;
     this.fetcher = fetcher;
     this.env = env;
+    this.now = now;
     this.tokens = new Map();
     this.verified = false;
     this.foundationConfig = null;
@@ -72,10 +73,20 @@ export class Azure {
   async token(resource) {
     requireValue(this.verified, 'Azure scope must be verified before requesting a token.');
     const cached = this.tokens.get(resource);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
-    const value = await this.az(['account', 'get-access-token', '--resource', resource, '--query', 'accessToken'], { raw: true, sensitive: true });
-    requireValue(value.length > 100, 'Azure CLI did not provide an access token.');
-    this.tokens.set(resource, { value, expiresAt: Date.now() + 45 * 60 * 1000 });
+    if (cached && cached.expiresAt > this.now()) return cached.value;
+    this.tokens.delete(resource);
+    const token = await this.az([
+      'account', 'get-access-token', '--resource', resource,
+      '--query', '{accessToken:accessToken,expires_on:expires_on}',
+    ], { sensitive: true });
+    const value = token?.accessToken;
+    requireValue(typeof value === 'string' && value.length > 100, 'Azure CLI did not provide an access token.');
+    const expiry = token?.expires_on;
+    requireValue((typeof expiry === 'number' && Number.isSafeInteger(expiry))
+      || (typeof expiry === 'string' && /^\d+$/.test(expiry)), 'Azure CLI returned a missing or invalid numeric token expiry.');
+    const expiresAt = Number(expiry) * 1000 - 60_000;
+    requireValue(Number.isSafeInteger(expiresAt) && expiresAt > this.now(), 'Azure access token is expired or too close to expiry.');
+    this.tokens.set(resource, { value, expiresAt });
     return value;
   }
 

@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { watchdogDefinition } from '../../infra/test/watchdog-definition.mjs';
 import { CONFIG, GROUP_ID, MANAGED_GROUP_ID } from './config.mjs';
-import { idleState, startState, extendState } from './state.mjs';
+import { idleState, startState, extendState, beginSubmission, pendingSubmission } from './state.mjs';
 import { FOUNDATION, RUN_ID, TEST_NOW } from './test-fixtures.mjs';
 import { evaluate, actionMap } from './wdl-test-evaluator.mjs';
+import { PROTOCOL, operationUrl } from './operations.mjs';
 
 const definition = watchdogDefinition();
 const actions = actionMap(definition);
@@ -17,12 +18,17 @@ const context = (observed = state, current = state) => ({
     identityId: 'non-secret-test-identity',
   },
   variables: { leaseId: 'test-lease' },
-  bodies: { Read_state: observed, Read_current: current },
+  bodies: {
+    Read_state: observed, Read_current: current,
+    Read_cleanup_state: { ...current, phase: 'Stopping' }, Cleanup_pending: [],
+    Finish_pending: [],
+  },
   now: '2026-01-01T16:01:00.000Z',
 });
 
 test('checked-in watchdog JSON exactly matches its source and uses a five-minute single-run recurrence', () => {
   assert.deepEqual(JSON.parse(readFileSync(new URL('../../infra/test/watchdog.json', import.meta.url))), definition);
+  assert.equal(definition.contentVersion, `${PROTOCOL.stateVersion}.0.0.0`);
   assert.equal(definition.triggers.Check_expiry.recurrence.interval, 5);
   assert.equal(definition.triggers.Check_expiry.runtimeConfiguration.concurrency.runs, 1);
 });
@@ -33,7 +39,8 @@ test('generated control actions stay within the Logic Apps eight-level nesting l
       Math.max(depth(action.actions, level + 1), depth(action.else?.actions, level + 1))));
   }
   assert.ok(depth(definition.actions) <= 8);
-  assert.deepEqual(actions.Clean_claimed_run.runAfter, { Idle: ['Succeeded'] });
+  assert.deepEqual(actions.Reconcile_claimed_run.runAfter, { Idle: ['Succeeded'] });
+  assert.deepEqual(actions.Clean_claimed_run.runAfter, { Reconcile_claimed_run: ['Succeeded'] });
 });
 
 test('all HTTP calls use the assigned identity and Blob calls include required service/date headers', () => {
@@ -90,7 +97,7 @@ test('generated teardown rejects foreign resources and requires actual inventory
   const ctx = context();
   ctx.bodies.Read_stack = {
     id: state.stackId, tags: { runId: RUN_ID, application: 'called-it', environment: 'test' },
-    properties: { resources: [], deploymentScope: GROUP_ID, denySettings: { mode: 'none' } },
+    properties: { resources: [], deploymentScope: GROUP_ID, denySettings: { mode: 'none' }, provisioningState: 'succeeded' },
   };
   ctx.bodies.Foreign_resources = [];
   assert.equal(evaluate(actions.Owned_stack.expression, ctx), true);
@@ -145,4 +152,111 @@ test('a late cleanup completion cannot clear a newer run and produces a valid Id
   assert.equal(idle.lastRunId, RUN_ID);
   ctx.bodies.Read_finish.runId = 'a'.repeat(32);
   assert.equal(evaluate(actions.Same_run.expression, ctx), false);
+});
+
+test('generated predicates use all documented stack states, including camelCase delete/update phases', () => {
+  const ctx = context();
+  for (const phase of PROTOCOL.stackStates.inFlight) {
+    ctx.bodies.Read_stack = { properties: { provisioningState: phase } };
+    assert.equal(evaluate(actions.Deployment_busy.expression, ctx), true, phase);
+  }
+  for (const phase of ['deleting', 'deletingResources']) {
+    ctx.bodies.Read_stack = { properties: { provisioningState: phase } };
+    assert.equal(evaluate(actions.Already_deleting.expression, ctx), true, phase);
+    assert.equal(evaluate(actions.Deployment_busy.expression, ctx), false, phase);
+  }
+});
+
+test('WDL requires actual terminal evidence and normalizes ARM LRO status spelling', () => {
+  const ctx = context();
+  for (const item of [
+    { status: 'pending' },
+    { status: 'terminal' },
+    { status: 'terminal', result: 'succeeded', completedAt: TEST_NOW.toISOString() },
+  ]) assert.equal(evaluate(actions.Cleanup_pending.inputs.where, { ...ctx, item }), true);
+  assert.equal(evaluate(actions.Cleanup_pending.inputs.where, {
+    ...ctx, item: { status: 'terminal', result: 'succeeded', evidence: { kind: 'lro' }, completedAt: TEST_NOW.toISOString() },
+  }), false);
+  ctx.outputs = { Read_submission_operation: { statusCode: 200 } };
+  for (const status of ['Succeeded', 'Failed', 'Canceled', 'Cancelled']) {
+    ctx.bodies.Read_submission_operation = { status };
+    assert.equal(evaluate(actions.Operation_terminal.expression, ctx), true);
+    assert.ok(['succeeded', 'failed', 'canceled'].includes(evaluate(actions.Lro_evidence.inputs.result, ctx)));
+  }
+  ctx.outputs.Read_submission_operation.statusCode = 204;
+  ctx.bodies.Read_submission_operation = null;
+  assert.equal(evaluate(actions.Operation_terminal.expression, ctx), false);
+});
+
+test('an unresolved submission blocks both cleanup and the final Idle write even with an empty group', () => {
+  const intent = beginSubmission(state, {}, TEST_NOW);
+  const entry = pendingSubmission(intent);
+  const ctx = context(intent, intent);
+  ctx.bodies.Find_pending = [entry];
+  ctx.bodies.Read_candidate = null;
+  ctx.outputs = { Read_candidate: { statusCode: 404 }, Read_remaining: { statusCode: 200 }, Read_managed_group: { statusCode: 404 } };
+  ctx.bodies.Read_remaining = { value: [] };
+  ctx.bodies.Read_finish = { ...intent, phase: 'Stopping' };
+  ctx.bodies.Cleanup_pending = [entry];
+  ctx.bodies.Finish_pending = [entry];
+  assert.equal(evaluate(actions.Candidate_generation.expression, ctx), false);
+  assert.equal(evaluate(actions.Submission_evidence_ready.expression, ctx), false);
+  assert.equal(evaluate(actions.Check_empty.expression, ctx), true);
+  assert.equal(evaluate(actions.All_submissions_settled.expression, ctx), false);
+  assert.equal(evaluate(actions.Same_run.expression, ctx), false);
+  ctx.bodies.Read_state = { ...intent, phase: 'Idle' };
+  assert.equal(evaluate(actions.Idle.expression, ctx), false);
+});
+
+test('WDL requires the associated new deployment generation, not new tags and an old terminal state', () => {
+  const priorId = `${GROUP_ID}/providers/Microsoft.Resources/deployments/previous`;
+  const oldStackCorrelation = '10000000-0000-0000-0000-000000000001';
+  const oldDeploymentCorrelation = '20000000-0000-0000-0000-000000000001';
+  const intent = beginSubmission(state, {
+    stackCorrelationId: oldStackCorrelation, deploymentId: priorId, deploymentCorrelationId: oldDeploymentCorrelation,
+  }, TEST_NOW);
+  const entry = pendingSubmission(intent);
+  const ctx = context(intent, intent);
+  ctx.bodies.Find_pending = [entry];
+  ctx.bodies.Read_candidate = {
+    id: intent.stackId, tags: { application: 'called-it', environment: 'test', runId: RUN_ID, submissionId: entry.id },
+    properties: {
+      deploymentScope: GROUP_ID, parameters: { submissionId: { value: entry.id } },
+      correlationId: oldStackCorrelation, deploymentId: priorId, provisioningState: 'succeeded',
+    },
+  };
+  ctx.outputs = { Read_candidate: { statusCode: 200 }, Read_submission_deployment: { statusCode: 200 } };
+  assert.equal(evaluate(actions.Candidate_generation.expression, ctx), false);
+  ctx.bodies.Read_candidate.properties.correlationId = '30000000-0000-0000-0000-000000000001';
+  ctx.bodies.Read_submission_deployment = {
+    id: priorId, properties: {
+      correlationId: oldDeploymentCorrelation, provisioningState: 'Succeeded',
+      parameters: { submissionId: { value: entry.id } },
+    },
+  };
+  assert.equal(evaluate(actions.Candidate_generation.expression, ctx), true);
+  assert.equal(evaluate(actions.Generation_terminal.expression, ctx), false);
+  ctx.bodies.Read_submission_deployment.properties.correlationId = '40000000-0000-0000-0000-000000000001';
+  assert.equal(evaluate(actions.Generation_terminal.expression, ctx), true);
+  ctx.bodies.Read_submission_deployment.properties.provisioningState = 'Running';
+  assert.equal(evaluate(actions.Generation_terminal.expression, ctx), false);
+});
+
+test('JS and WDL operation URL guards admit provider LRO paths but never another subscription', () => {
+  const intent = beginSubmission(state, {}, TEST_NOW);
+  const entry = pendingSubmission(intent);
+  const ctx = context(intent, intent);
+  ctx.bodies.Find_pending = [entry];
+  for (const suffix of [
+    `/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationStatuses/operation-1?api-version=2024-03-01`,
+    `/providers/Microsoft.Resources/deploymentStackOperationResults/operation-1?monitor=true&api-version=2024-03-01`,
+    `/resourceGroups/${CONFIG.runGroup}/providers/Microsoft.Resources/deployments/generation/operationStatuses/operation-1?api-version=2024-03-01`,
+  ]) {
+    entry.operationUrl = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}${suffix}`;
+    assert.doesNotThrow(() => operationUrl(entry.operationUrl, 'Microsoft.Resources', state.stackId));
+    assert.equal(evaluate(actions.Safe_operation_url.expression, ctx), true);
+    entry.operationUrl = entry.operationUrl.replace(CONFIG.subscriptionId, 'another-subscription');
+    assert.throws(() => operationUrl(entry.operationUrl, 'Microsoft.Resources', state.stackId));
+    assert.equal(evaluate(actions.Safe_operation_url.expression, ctx), false);
+  }
 });

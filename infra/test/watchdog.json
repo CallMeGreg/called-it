@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
-  "contentVersion": "1.0.0.0",
+  "contentVersion": "2.0.0.0",
   "parameters": {
     "stateUrl": {
       "type": "String"
@@ -62,13 +62,13 @@
     },
     "Idle": {
       "type": "If",
-      "expression": "@and(equals(body('Read_state')?['schemaVersion'],1),equals(body('Read_state')?['subscriptionId'],parameters('subscriptionId')),equals(body('Read_state')?['tenantId'],parameters('tenantId')),equals(body('Read_state')?['phase'],'Idle'))",
+      "expression": "@and(equals(body('Read_state')?['schemaVersion'],2),equals(body('Read_state')?['subscriptionId'],parameters('subscriptionId')),equals(body('Read_state')?['tenantId'],parameters('tenantId')),equals(body('Read_state')?['phase'],'Idle'),equals(body('Read_state')?['submissions'],json('[]')))",
       "actions": {},
       "else": {
         "actions": {
           "Valid_run": {
             "type": "If",
-            "expression": "@and( equals(body('Read_state')?['schemaVersion'],1), equals(body('Read_state')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_state')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_state')?['phase']), equals(length(coalesce(body('Read_state')?['runId'],'')),32), not(equals(body('Read_state')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_state')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), equals(body('Read_state')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_state')?['runId'])) )",
+            "expression": "@and( equals(body('Read_state')?['schemaVersion'],2), equals(body('Read_state')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_state')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_state')?['phase']), equals(length(coalesce(body('Read_state')?['runId'],'')),32), not(equals(body('Read_state')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_state')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), not(equals(body('Read_state')?['submissions'],null)), equals(body('Read_state')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_state')?['runId'])) )",
             "actions": {
               "Is_due": {
                 "type": "If",
@@ -139,7 +139,7 @@
                       },
                       "Still_due": {
                         "type": "If",
-                        "expression": "@and(and( equals(body('Read_current')?['schemaVersion'],1), equals(body('Read_current')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_current')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_current')?['phase']), equals(length(coalesce(body('Read_current')?['runId'],'')),32), not(equals(body('Read_current')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_current')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), equals(body('Read_current')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_current')?['runId'])) ),equals(body('Read_current')?['runId'],body('Read_state')?['runId']),or(equals(body('Read_current')?['phase'],'Stopping'),lessOrEquals(ticks(coalesce(body('Read_current')?['expiresAt'],'9999-12-31T23:59:59Z')),ticks(utcNow()))))",
+                        "expression": "@and(and( equals(body('Read_current')?['schemaVersion'],2), equals(body('Read_current')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_current')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_current')?['phase']), equals(length(coalesce(body('Read_current')?['runId'],'')),32), not(equals(body('Read_current')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_current')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), not(equals(body('Read_current')?['submissions'],null)), equals(body('Read_current')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_current')?['runId'])) ),equals(body('Read_current')?['runId'],body('Read_state')?['runId']),or(equals(body('Read_current')?['phase'],'Stopping'),lessOrEquals(ticks(coalesce(body('Read_current')?['expiresAt'],'9999-12-31T23:59:59Z')),ticks(utcNow()))))",
                         "actions": {
                           "Mark_stopping": {
                             "type": "Http",
@@ -282,22 +282,26 @@
         ]
       }
     },
-    "Clean_claimed_run": {
+    "Reconcile_claimed_run": {
       "type": "If",
       "expression": "@and(equals(actions('Mark_stopping')?['status'],'Succeeded'),equals(actions('Release_state')?['status'],'Succeeded'))",
       "actions": {
-        "Read_stack": {
+        "Read_submission_state": {
           "type": "Http",
           "inputs": {
             "method": "GET",
-            "uri": "@concat('https://management.azure.com',concat(body('Read_current')?['stackId'],'?api-version=2024-03-01'))",
+            "uri": "@concat(parameters('stateUrl'),'')",
             "authentication": {
               "type": "ManagedServiceIdentity",
               "identity": "@parameters('identityId')",
-              "audience": "https://management.azure.com/"
+              "audience": "https://storage.azure.com/"
             },
             "retryPolicy": {
               "type": "none"
+            },
+            "headers": {
+              "x-ms-version": "2023-11-03",
+              "x-ms-date": "@formatDateTime(utcNow(),'r')"
             }
           },
           "operationOptions": "DisableAsyncPattern",
@@ -306,15 +310,27 @@
           },
           "runAfter": {}
         },
-        "Stack_result": {
+        "Find_pending": {
+          "type": "Query",
+          "inputs": {
+            "from": "@body('Read_submission_state')?['submissions']",
+            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),not(empty(item()?['completedAt']))))"
+          },
+          "runAfter": {
+            "Read_submission_state": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Has_pending_submission": {
           "type": "If",
-          "expression": "@equals(outputs('Read_stack')?['statusCode'],404)",
+          "expression": "@not(empty(body('Find_pending')))",
           "actions": {
-            "Read_remaining": {
+            "Read_candidate": {
               "type": "Http",
               "inputs": {
                 "method": "GET",
-                "uri": "@concat('https://management.azure.com',concat(parameters('runGroupId'),'/resources?api-version=2021-04-01'))",
+                "uri": "@concat('https://management.azure.com',concat(body('Read_current')?['stackId'],'?api-version=2024-03-01'))",
                 "authentication": {
                   "type": "ManagedServiceIdentity",
                   "identity": "@parameters('identityId')",
@@ -330,35 +346,174 @@
               },
               "runAfter": {}
             },
-            "Read_managed_group": {
-              "type": "Http",
-              "inputs": {
-                "method": "GET",
-                "uri": "@concat('https://management.azure.com',concat(parameters('managedGroupId'),'?api-version=2024-03-01'))",
-                "authentication": {
-                  "type": "ManagedServiceIdentity",
-                  "identity": "@parameters('identityId')",
-                  "audience": "https://management.azure.com/"
-                },
-                "retryPolicy": {
-                  "type": "none"
+            "Has_operation_url": {
+              "type": "If",
+              "expression": "@not(empty(first(body('Find_pending'))?['operationUrl']))",
+              "actions": {
+                "Safe_operation_url": {
+                  "type": "If",
+                  "expression": "@and( or(startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com/subscriptions/',parameters('subscriptionId'),'/providers/microsoft.resources/'),'locations/eastus2/')), startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com/subscriptions/',parameters('subscriptionId'),'/providers/microsoft.resources/'),'operations/')),startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com/subscriptions/',parameters('subscriptionId'),'/providers/microsoft.resources/'),'operationstatuses/')),startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com/subscriptions/',parameters('subscriptionId'),'/providers/microsoft.resources/'),'operationresults/')),startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com/subscriptions/',parameters('subscriptionId'),'/providers/microsoft.resources/'),'deploymentstackoperationstatuses/')),startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com/subscriptions/',parameters('subscriptionId'),'/providers/microsoft.resources/'),'deploymentstackoperationresults/')), startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com',toLower(body('Read_current')?['stackId'])),'/')), startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat(concat('https://management.azure.com',toLower(body('Read_current')?['stackId'])),'?')), and(startsWith(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),concat('https://management.azure.com',concat(toLower(parameters('runGroupId')),'/providers/microsoft.resources/deployments/'))),or(contains(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),'/operationstatuses/'),contains(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),'/operationresults/'),contains(toLower(coalesce(first(body('Find_pending'))?['operationUrl'],'')),'/operations/')))), not(contains(first(body('Find_pending'))?['operationUrl'],'%')),not(contains(first(body('Find_pending'))?['operationUrl'],'..')),not(contains(first(body('Find_pending'))?['operationUrl'],'#')),not(contains(first(body('Find_pending'))?['operationUrl'],'\\\\')), or( and(startsWith(uriQuery(first(body('Find_pending'))?['operationUrl']),'?api-version='),or(equals(length(split(uriQuery(first(body('Find_pending'))?['operationUrl']),'&')),1), and(equals(length(split(uriQuery(first(body('Find_pending'))?['operationUrl']),'&')),2),or(endsWith(uriQuery(first(body('Find_pending'))?['operationUrl']),'&monitor=true'),endsWith(uriQuery(first(body('Find_pending'))?['operationUrl']),'&monitor=false'))))), and(equals(length(split(uriQuery(first(body('Find_pending'))?['operationUrl']),'&')),2),or(startsWith(uriQuery(first(body('Find_pending'))?['operationUrl']),'?monitor=true&api-version='),startsWith(uriQuery(first(body('Find_pending'))?['operationUrl']),'?monitor=false&api-version='))) ) )",
+                  "actions": {
+                    "Read_submission_operation": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "GET",
+                        "uri": "@first(body('Find_pending'))?['operationUrl']",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "identity": "@parameters('identityId')",
+                          "audience": "https://management.azure.com/"
+                        },
+                        "retryPolicy": {
+                          "type": "none"
+                        }
+                      },
+                      "operationOptions": "DisableAsyncPattern",
+                      "limit": {
+                        "timeout": "PT20S"
+                      },
+                      "runAfter": {}
+                    },
+                    "Operation_terminal": {
+                      "type": "If",
+                      "expression": "@and(equals(outputs('Read_submission_operation')?['statusCode'],200),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(replace(toLower(coalesce(body('Read_submission_operation')?['status'],'')),'cancelled','canceled'),''))))",
+                      "actions": {
+                        "Lro_evidence": {
+                          "type": "Compose",
+                          "inputs": {
+                            "result": "@replace(toLower(coalesce(body('Read_submission_operation')?['status'],'')),'cancelled','canceled')",
+                            "evidence": {
+                              "kind": "lro",
+                              "operationUrl": "@first(body('Find_pending'))?['operationUrl']"
+                            }
+                          },
+                          "runAfter": {}
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "runAfter": {
+                        "Read_submission_operation": [
+                          "Succeeded",
+                          "Failed",
+                          "TimedOut"
+                        ]
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "Unsafe_operation_url": {
+                        "type": "Terminate",
+                        "inputs": {
+                          "runStatus": "Failed",
+                          "runError": {
+                            "code": "UnsafeOperationUrl",
+                            "message": "Refusing a submission operation URL outside the approved ARM scope."
+                          }
+                        },
+                        "runAfter": {}
+                      }
+                    }
+                  },
+                  "runAfter": {}
                 }
               },
-              "operationOptions": "DisableAsyncPattern",
-              "limit": {
-                "timeout": "PT20S"
+              "else": {
+                "actions": {}
               },
               "runAfter": {
-                "Read_remaining": [
+                "Read_candidate": [
+                  "Succeeded",
+                  "Failed",
+                  "TimedOut"
+                ]
+              }
+            },
+            "Need_generation_evidence": {
+              "type": "If",
+              "expression": "@not(equals(actions('Lro_evidence')?['status'],'Succeeded'))",
+              "actions": {
+                "Candidate_generation": {
+                  "type": "If",
+                  "expression": "@and( equals(outputs('Read_candidate')?['statusCode'],200), equals(toLower(coalesce(body('Read_candidate')?['id'],'')),toLower(body('Read_current')?['stackId'])), equals(body('Read_candidate')?['tags']?['runId'],body('Read_current')?['runId']), equals(body('Read_candidate')?['tags']?['application'],'called-it'),equals(body('Read_candidate')?['tags']?['environment'],'test'), equals(toLower(coalesce(body('Read_candidate')?['properties']?['deploymentScope'],'')),toLower(parameters('runGroupId'))), equals(body('Read_candidate')?['tags']?['submissionId'],first(body('Find_pending'))?['id']), equals(body('Read_candidate')?['properties']?['parameters']?['submissionId']?['value'],first(body('Find_pending'))?['id']), and(equals(length(coalesce(body('Read_candidate')?['properties']?['correlationId'],'')),36),equals(length(replace(coalesce(body('Read_candidate')?['properties']?['correlationId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(body('Read_candidate')?['properties']?['correlationId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))), not(equals(toLower(coalesce(body('Read_candidate')?['properties']?['correlationId'],'')),toLower(coalesce(first(body('Find_pending'))?['previousStackCorrelationId'],'')))), startsWith(toLower(coalesce(body('Read_candidate')?['properties']?['deploymentId'],'')),concat(toLower(parameters('runGroupId')),'/providers/microsoft.resources/deployments/')), not(contains(coalesce(body('Read_candidate')?['properties']?['deploymentId'],''),'..')), not(contains(coalesce(body('Read_candidate')?['properties']?['deploymentId'],''),'%')) )",
+                  "actions": {
+                    "Read_submission_deployment": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "GET",
+                        "uri": "@concat('https://management.azure.com',concat(body('Read_candidate')?['properties']?['deploymentId'],'?api-version=2022-09-01'))",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "identity": "@parameters('identityId')",
+                          "audience": "https://management.azure.com/"
+                        },
+                        "retryPolicy": {
+                          "type": "none"
+                        }
+                      },
+                      "operationOptions": "DisableAsyncPattern",
+                      "limit": {
+                        "timeout": "PT20S"
+                      },
+                      "runAfter": {}
+                    },
+                    "Generation_terminal": {
+                      "type": "If",
+                      "expression": "@and( equals(outputs('Read_submission_deployment')?['statusCode'],200), equals(toLower(coalesce(body('Read_submission_deployment')?['id'],'')),toLower(body('Read_candidate')?['properties']?['deploymentId'])), equals(body('Read_submission_deployment')?['properties']?['parameters']?['submissionId']?['value'],first(body('Find_pending'))?['id']), and(equals(length(coalesce(body('Read_submission_deployment')?['properties']?['correlationId'],'')),36),equals(length(replace(coalesce(body('Read_submission_deployment')?['properties']?['correlationId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(body('Read_submission_deployment')?['properties']?['correlationId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))), or(not(equals(toLower(coalesce(body('Read_submission_deployment')?['id'],'')),toLower(coalesce(first(body('Find_pending'))?['previousDeploymentId'],'')))), not(equals(toLower(coalesce(body('Read_submission_deployment')?['properties']?['correlationId'],'')),toLower(coalesce(first(body('Find_pending'))?['previousDeploymentCorrelationId'],''))))), contains(createArray('succeeded','failed','canceled'),toLower(coalesce(body('Read_candidate')?['properties']?['provisioningState'],''))), contains(createArray('succeeded','failed','canceled'),toLower(coalesce(body('Read_submission_deployment')?['properties']?['provisioningState'],''))), or(not(equals(toLower(coalesce(body('Read_candidate')?['properties']?['provisioningState'],'')),'succeeded')),equals(toLower(coalesce(body('Read_submission_deployment')?['properties']?['provisioningState'],'')),'succeeded')) )",
+                      "actions": {
+                        "Generation_evidence": {
+                          "type": "Compose",
+                          "inputs": {
+                            "result": "@toLower(coalesce(body('Read_candidate')?['properties']?['provisioningState'],''))",
+                            "evidence": {
+                              "kind": "deployment-generation",
+                              "stackCorrelationId": "@body('Read_candidate')?['properties']?['correlationId']",
+                              "deploymentId": "@body('Read_submission_deployment')?['id']",
+                              "deploymentCorrelationId": "@body('Read_submission_deployment')?['properties']?['correlationId']"
+                            }
+                          },
+                          "runAfter": {}
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "runAfter": {
+                        "Read_submission_deployment": [
+                          "Succeeded",
+                          "Failed",
+                          "TimedOut"
+                        ]
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {}
+                  },
+                  "runAfter": {}
+                }
+              },
+              "else": {
+                "actions": {}
+              },
+              "runAfter": {
+                "Has_operation_url": [
                   "Succeeded"
                 ]
               }
             },
-            "Check_empty": {
+            "Submission_evidence_ready": {
               "type": "If",
-              "expression": "@and(equals(outputs('Read_remaining')?['statusCode'],200),not(equals(body('Read_remaining')?['value'],null)),empty(body('Read_remaining')?['value']),empty(body('Read_remaining')?['nextLink']),equals(outputs('Read_managed_group')?['statusCode'],404))",
+              "expression": "@or(equals(actions('Lro_evidence')?['status'],'Succeeded'),equals(actions('Generation_evidence')?['status'],'Succeeded'))",
               "actions": {
-                "Acquire_finish": {
+                "Chosen_evidence": {
+                  "type": "Compose",
+                  "inputs": "@if(equals(actions('Lro_evidence')?['status'],'Succeeded'),outputs('Lro_evidence'),outputs('Generation_evidence'))",
+                  "runAfter": {}
+                },
+                "Acquire_settle": {
                   "type": "Http",
                   "inputs": {
                     "method": "PUT",
@@ -383,12 +538,16 @@
                   "limit": {
                     "timeout": "PT20S"
                   },
-                  "runAfter": {}
+                  "runAfter": {
+                    "Chosen_evidence": [
+                      "Succeeded"
+                    ]
+                  }
                 },
-                "Finish_locked": {
+                "Settle_locked": {
                   "type": "Scope",
                   "actions": {
-                    "Read_finish": {
+                    "Read_settle": {
                       "type": "Http",
                       "inputs": {
                         "method": "GET",
@@ -412,11 +571,31 @@
                       },
                       "runAfter": {}
                     },
-                    "Same_run": {
+                    "Same_settle_run": {
                       "type": "If",
-                      "expression": "@and(equals(body('Read_finish')?['runId'],body('Read_current')?['runId']),equals(body('Read_finish')?['phase'],'Stopping'))",
+                      "expression": "@and(and( equals(body('Read_settle')?['schemaVersion'],2), equals(body('Read_settle')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_settle')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_settle')?['phase']), equals(length(coalesce(body('Read_settle')?['runId'],'')),32), not(equals(body('Read_settle')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_settle')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), not(equals(body('Read_settle')?['submissions'],null)), equals(body('Read_settle')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_settle')?['runId'])) ),equals(body('Read_settle')?['runId'],body('Read_current')?['runId']),equals(body('Read_settle')?['phase'],'Stopping'))",
                       "actions": {
-                        "Write_idle": {
+                        "Transform_submissions": {
+                          "type": "Select",
+                          "inputs": {
+                            "from": "@body('Read_settle')?['submissions']",
+                            "select": {
+                              "id": "@item()?['id']",
+                              "clientRequestId": "@item()?['clientRequestId']",
+                              "submittedAt": "@item()?['submittedAt']",
+                              "previousStackCorrelationId": "@item()?['previousStackCorrelationId']",
+                              "previousDeploymentId": "@item()?['previousDeploymentId']",
+                              "previousDeploymentCorrelationId": "@item()?['previousDeploymentCorrelationId']",
+                              "operationUrl": "@item()?['operationUrl']",
+                              "status": "@if(and(equals(item()?['id'],first(body('Find_pending'))?['id']),equals(item()?['status'],'pending')),'terminal',item()?['status'])",
+                              "result": "@if(and(equals(item()?['id'],first(body('Find_pending'))?['id']),equals(item()?['status'],'pending')),outputs('Chosen_evidence')?['result'],item()?['result'])",
+                              "evidence": "@if(and(equals(item()?['id'],first(body('Find_pending'))?['id']),equals(item()?['status'],'pending')),outputs('Chosen_evidence')?['evidence'],item()?['evidence'])",
+                              "completedAt": "@if(and(equals(item()?['id'],first(body('Find_pending'))?['id']),equals(item()?['status'],'pending')),utcNow(),item()?['completedAt'])"
+                            }
+                          },
+                          "runAfter": {}
+                        },
+                        "Write_settlement": {
                           "type": "Http",
                           "inputs": {
                             "method": "PUT",
@@ -436,24 +615,28 @@
                               "x-ms-lease-id": "@outputs('Lease_id')",
                               "Content-Type": "application/json"
                             },
-                            "body": "@setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(body('Read_finish'),'phase','Idle'),'lastRunId',body('Read_current')?['runId']),'runId',null),'stackId',null),'expiresAt',null),'url',null),'lastError',null),'updatedAt',utcNow())"
+                            "body": "@setProperty(setProperty(body('Read_settle'),'submissions',body('Transform_submissions')),'updatedAt',utcNow())"
                           },
                           "operationOptions": "DisableAsyncPattern",
                           "limit": {
                             "timeout": "PT20S"
                           },
-                          "runAfter": {}
+                          "runAfter": {
+                            "Transform_submissions": [
+                              "Succeeded"
+                            ]
+                          }
                         }
                       },
                       "else": {
                         "actions": {
-                          "Invalid_finish": {
+                          "Settlement_changed": {
                             "type": "Terminate",
                             "inputs": {
                               "runStatus": "Failed",
                               "runError": {
                                 "code": "StateChanged",
-                                "message": "Cleanup cannot clear another run. Inspect TEST lifecycle state."
+                                "message": "Submission reconciliation cannot change another run."
                               }
                             },
                             "runAfter": {}
@@ -461,19 +644,19 @@
                         }
                       },
                       "runAfter": {
-                        "Read_finish": [
+                        "Read_settle": [
                           "Succeeded"
                         ]
                       }
                     }
                   },
                   "runAfter": {
-                    "Acquire_finish": [
+                    "Acquire_settle": [
                       "Succeeded"
                     ]
                   }
                 },
-                "Release_finish": {
+                "Release_settle": {
                   "type": "Http",
                   "inputs": {
                     "method": "PUT",
@@ -498,10 +681,9 @@
                     "timeout": "PT20S"
                   },
                   "runAfter": {
-                    "Finish_locked": [
+                    "Settle_locked": [
                       "Succeeded",
                       "Failed",
-                      "Skipped",
                       "TimedOut"
                     ]
                   }
@@ -509,13 +691,13 @@
               },
               "else": {
                 "actions": {
-                  "Leftovers": {
+                  "Submission_unresolved": {
                     "type": "Terminate",
                     "inputs": {
                       "runStatus": "Failed",
                       "runError": {
-                        "code": "CleanupIncomplete",
-                        "message": "Disposable resources or the ACA-managed group remain. State stays Stopping; cleanup will retry. Data and keys were not targeted."
+                        "code": "UnresolvedSubmission",
+                        "message": "@concat('Stack submission ',first(body('Find_pending'))?['id'],' / client request ',first(body('Find_pending'))?['clientRequestId'],' is unresolved. State stays Stopping; no delete or new Start is safe. Inspect its operation URL and Azure deployment/activity history. A 404 or empty inventory is not completion evidence.')"
                       }
                     },
                     "runAfter": {}
@@ -523,98 +705,363 @@
                 }
               },
               "runAfter": {
-                "Read_managed_group": [
-                  "Succeeded",
-                  "Failed",
-                  "TimedOut"
+                "Need_generation_evidence": [
+                  "Succeeded"
                 ]
               }
             }
           },
           "else": {
-            "actions": {
-              "Stack_exists": {
-                "type": "If",
-                "expression": "@equals(outputs('Read_stack')?['statusCode'],200)",
-                "actions": {
-                  "Foreign_resources": {
-                    "type": "Query",
-                    "inputs": {
-                      "from": "@coalesce(body('Read_stack')?['properties']?['resources'],json('[]'))",
-                      "where": "@not(startsWith(toLower(item()?['id']),concat(toLower(parameters('runGroupId')),'/providers/')))"
+            "actions": {}
+          },
+          "runAfter": {
+            "Find_pending": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Idle": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Clean_claimed_run": {
+      "type": "If",
+      "expression": "@and(equals(actions('Mark_stopping')?['status'],'Succeeded'),equals(actions('Release_state')?['status'],'Succeeded'))",
+      "actions": {
+        "Read_cleanup_state": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "@concat(parameters('stateUrl'),'')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "none"
+            },
+            "headers": {
+              "x-ms-version": "2023-11-03",
+              "x-ms-date": "@formatDateTime(utcNow(),'r')"
+            }
+          },
+          "operationOptions": "DisableAsyncPattern",
+          "limit": {
+            "timeout": "PT20S"
+          },
+          "runAfter": {}
+        },
+        "Cleanup_pending": {
+          "type": "Query",
+          "inputs": {
+            "from": "@body('Read_cleanup_state')?['submissions']",
+            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),not(empty(item()?['completedAt']))))"
+          },
+          "runAfter": {
+            "Read_cleanup_state": [
+              "Succeeded"
+            ]
+          }
+        },
+        "All_submissions_settled": {
+          "type": "If",
+          "expression": "@and(and( equals(body('Read_cleanup_state')?['schemaVersion'],2), equals(body('Read_cleanup_state')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_cleanup_state')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_cleanup_state')?['phase']), equals(length(coalesce(body('Read_cleanup_state')?['runId'],'')),32), not(equals(body('Read_cleanup_state')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_cleanup_state')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), not(equals(body('Read_cleanup_state')?['submissions'],null)), equals(body('Read_cleanup_state')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_cleanup_state')?['runId'])) ),equals(body('Read_cleanup_state')?['runId'],body('Read_current')?['runId']),equals(body('Read_cleanup_state')?['phase'],'Stopping'),empty(body('Cleanup_pending')))",
+          "actions": {
+            "Read_stack": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "@concat('https://management.azure.com',concat(body('Read_current')?['stackId'],'?api-version=2024-03-01'))",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "@parameters('identityId')",
+                  "audience": "https://management.azure.com/"
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
+              },
+              "operationOptions": "DisableAsyncPattern",
+              "limit": {
+                "timeout": "PT20S"
+              },
+              "runAfter": {}
+            },
+            "Stack_result": {
+              "type": "If",
+              "expression": "@equals(outputs('Read_stack')?['statusCode'],404)",
+              "actions": {
+                "Read_remaining": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@concat('https://management.azure.com',concat(parameters('runGroupId'),'/resources?api-version=2021-04-01'))",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "identity": "@parameters('identityId')",
+                      "audience": "https://management.azure.com/"
                     },
-                    "runAfter": {}
+                    "retryPolicy": {
+                      "type": "none"
+                    }
                   },
-                  "Owned_stack": {
-                    "type": "If",
-                    "expression": "@and(empty(body('Foreign_resources')),not(equals(body('Read_stack')?['properties']?['resources'],null)),equals(toLower(body('Read_stack')?['id']),toLower(body('Read_current')?['stackId'])),equals(body('Read_stack')?['tags']?['runId'],body('Read_current')?['runId']),equals(body('Read_stack')?['tags']?['application'],'called-it'),equals(body('Read_stack')?['tags']?['environment'],'test'),equals(toLower(body('Read_stack')?['properties']?['deploymentScope']),toLower(parameters('runGroupId'))),equals(body('Read_stack')?['properties']?['denySettings']?['mode'],'none'))",
-                    "actions": {
-                      "Deployment_busy": {
-                        "type": "If",
-                        "expression": "@contains(createArray('Creating','Updating','Validating','Deploying','Canceling'),body('Read_stack')?['properties']?['provisioningState'])",
-                        "actions": {
-                          "Check_deployment_scope": {
-                            "type": "If",
-                            "expression": "@startsWith(toLower(coalesce(body('Read_stack')?['properties']?['deploymentId'],'')),concat(toLower(parameters('runGroupId')),'/providers/microsoft.resources/deployments/'))",
-                            "actions": {
-                              "Cancel_inflight": {
-                                "type": "Http",
-                                "inputs": {
-                                  "method": "POST",
-                                  "uri": "@concat('https://management.azure.com',concat(body('Read_stack')?['properties']?['deploymentId'],'/cancel?api-version=2022-09-01'))",
-                                  "authentication": {
-                                    "type": "ManagedServiceIdentity",
-                                    "identity": "@parameters('identityId')",
-                                    "audience": "https://management.azure.com/"
-                                  },
-                                  "retryPolicy": {
-                                    "type": "none"
-                                  }
+                  "operationOptions": "DisableAsyncPattern",
+                  "limit": {
+                    "timeout": "PT20S"
+                  },
+                  "runAfter": {}
+                },
+                "Read_managed_group": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@concat('https://management.azure.com',concat(parameters('managedGroupId'),'?api-version=2024-03-01'))",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "identity": "@parameters('identityId')",
+                      "audience": "https://management.azure.com/"
+                    },
+                    "retryPolicy": {
+                      "type": "none"
+                    }
+                  },
+                  "operationOptions": "DisableAsyncPattern",
+                  "limit": {
+                    "timeout": "PT20S"
+                  },
+                  "runAfter": {
+                    "Read_remaining": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Check_empty": {
+                  "type": "If",
+                  "expression": "@and(equals(outputs('Read_remaining')?['statusCode'],200),not(equals(body('Read_remaining')?['value'],null)),empty(body('Read_remaining')?['value']),empty(body('Read_remaining')?['nextLink']),equals(outputs('Read_managed_group')?['statusCode'],404))",
+                  "actions": {
+                    "Acquire_finish": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "@concat(parameters('stateUrl'),'?comp=lease')",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "identity": "@parameters('identityId')",
+                          "audience": "https://storage.azure.com/"
+                        },
+                        "retryPolicy": {
+                          "type": "none"
+                        },
+                        "headers": {
+                          "x-ms-version": "2023-11-03",
+                          "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                          "x-ms-lease-action": "acquire",
+                          "x-ms-lease-duration": "60",
+                          "x-ms-proposed-lease-id": "@outputs('Lease_id')"
+                        }
+                      },
+                      "operationOptions": "DisableAsyncPattern",
+                      "limit": {
+                        "timeout": "PT20S"
+                      },
+                      "runAfter": {}
+                    },
+                    "Finish_locked": {
+                      "type": "Scope",
+                      "actions": {
+                        "Read_finish": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "GET",
+                            "uri": "@concat(parameters('stateUrl'),'')",
+                            "authentication": {
+                              "type": "ManagedServiceIdentity",
+                              "identity": "@parameters('identityId')",
+                              "audience": "https://storage.azure.com/"
+                            },
+                            "retryPolicy": {
+                              "type": "none"
+                            },
+                            "headers": {
+                              "x-ms-version": "2023-11-03",
+                              "x-ms-date": "@formatDateTime(utcNow(),'r')"
+                            }
+                          },
+                          "operationOptions": "DisableAsyncPattern",
+                          "limit": {
+                            "timeout": "PT20S"
+                          },
+                          "runAfter": {}
+                        },
+                        "Finish_pending": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@body('Read_finish')?['submissions']",
+                            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),not(empty(item()?['completedAt']))))"
+                          },
+                          "runAfter": {
+                            "Read_finish": [
+                              "Succeeded"
+                            ]
+                          }
+                        },
+                        "Same_run": {
+                          "type": "If",
+                          "expression": "@and(and( equals(body('Read_finish')?['schemaVersion'],2), equals(body('Read_finish')?['subscriptionId'],parameters('subscriptionId')), equals(body('Read_finish')?['tenantId'],parameters('tenantId')), contains(createArray('Starting','Running','Stopping'),body('Read_finish')?['phase']), equals(length(coalesce(body('Read_finish')?['runId'],'')),32), not(equals(body('Read_finish')?['runId'],'00000000000000000000000000000000')), empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(coalesce(body('Read_finish')?['runId'],''),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f','')), not(equals(body('Read_finish')?['submissions'],null)), equals(body('Read_finish')?['stackId'],concat(parameters('runGroupId'),'/providers/Microsoft.Resources/deploymentStacks/called-it-test-',body('Read_finish')?['runId'])) ),equals(body('Read_finish')?['runId'],body('Read_current')?['runId']),equals(body('Read_finish')?['phase'],'Stopping'),empty(body('Finish_pending')))",
+                          "actions": {
+                            "Write_idle": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "PUT",
+                                "uri": "@concat(parameters('stateUrl'),'')",
+                                "authentication": {
+                                  "type": "ManagedServiceIdentity",
+                                  "identity": "@parameters('identityId')",
+                                  "audience": "https://storage.azure.com/"
                                 },
-                                "operationOptions": "DisableAsyncPattern",
-                                "limit": {
-                                  "timeout": "PT20S"
+                                "retryPolicy": {
+                                  "type": "none"
+                                },
+                                "headers": {
+                                  "x-ms-version": "2023-11-03",
+                                  "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                                  "x-ms-blob-type": "BlockBlob",
+                                  "x-ms-lease-id": "@outputs('Lease_id')",
+                                  "Content-Type": "application/json"
+                                },
+                                "body": "@setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(setProperty(body('Read_finish'),'phase','Idle'),'lastRunId',body('Read_current')?['runId']),'runId',null),'stackId',null),'expiresAt',null),'url',null),'lastError',null),'updatedAt',utcNow()),'lastSubmissions',body('Read_finish')?['submissions']),'submissions',json('[]'))"
+                              },
+                              "operationOptions": "DisableAsyncPattern",
+                              "limit": {
+                                "timeout": "PT20S"
+                              },
+                              "runAfter": {}
+                            }
+                          },
+                          "else": {
+                            "actions": {
+                              "Invalid_finish": {
+                                "type": "Terminate",
+                                "inputs": {
+                                  "runStatus": "Failed",
+                                  "runError": {
+                                    "code": "StateChanged",
+                                    "message": "Cleanup cannot clear another run. Inspect TEST lifecycle state."
+                                  }
                                 },
                                 "runAfter": {}
                               }
-                            },
-                            "else": {
-                              "actions": {
-                                "Missing_deployment": {
-                                  "type": "Terminate",
-                                  "inputs": {
-                                    "runStatus": "Failed",
-                                    "runError": {
-                                      "code": "DeploymentBusy",
-                                      "message": "Stack deployment is still busy. Retry after it settles; never delete untracked resources."
-                                    }
-                                  },
-                                  "runAfter": {}
-                                }
-                              }
-                            },
-                            "runAfter": {}
+                            }
+                          },
+                          "runAfter": {
+                            "Finish_pending": [
+                              "Succeeded"
+                            ]
+                          }
+                        }
+                      },
+                      "runAfter": {
+                        "Acquire_finish": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "Release_finish": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "@concat(parameters('stateUrl'),'?comp=lease')",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "identity": "@parameters('identityId')",
+                          "audience": "https://storage.azure.com/"
+                        },
+                        "retryPolicy": {
+                          "type": "none"
+                        },
+                        "headers": {
+                          "x-ms-version": "2023-11-03",
+                          "x-ms-date": "@formatDateTime(utcNow(),'r')",
+                          "x-ms-lease-action": "release",
+                          "x-ms-lease-id": "@outputs('Lease_id')"
+                        }
+                      },
+                      "operationOptions": "DisableAsyncPattern",
+                      "limit": {
+                        "timeout": "PT20S"
+                      },
+                      "runAfter": {
+                        "Finish_locked": [
+                          "Succeeded",
+                          "Failed",
+                          "Skipped",
+                          "TimedOut"
+                        ]
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "Leftovers": {
+                        "type": "Terminate",
+                        "inputs": {
+                          "runStatus": "Failed",
+                          "runError": {
+                            "code": "CleanupIncomplete",
+                            "message": "Disposable resources or the ACA-managed group remain. State stays Stopping; cleanup will retry. Data and keys were not targeted."
                           }
                         },
-                        "else": {
-                          "actions": {
-                            "Already_deleting": {
-                              "type": "If",
-                              "expression": "@equals(body('Read_stack')?['properties']?['provisioningState'],'Deleting')",
-                              "actions": {
-                                "Await_provider": {
-                                  "type": "Compose",
-                                  "inputs": "Teardown is in progress; the next watchdog check verifies completion.",
-                                  "runAfter": {}
-                                }
-                              },
-                              "else": {
+                        "runAfter": {}
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Read_managed_group": [
+                      "Succeeded",
+                      "Failed",
+                      "TimedOut"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Stack_exists": {
+                    "type": "If",
+                    "expression": "@equals(outputs('Read_stack')?['statusCode'],200)",
+                    "actions": {
+                      "Foreign_resources": {
+                        "type": "Query",
+                        "inputs": {
+                          "from": "@coalesce(body('Read_stack')?['properties']?['resources'],json('[]'))",
+                          "where": "@not(startsWith(toLower(item()?['id']),concat(toLower(parameters('runGroupId')),'/providers/')))"
+                        },
+                        "runAfter": {}
+                      },
+                      "Owned_stack": {
+                        "type": "If",
+                        "expression": "@and(empty(body('Foreign_resources')),not(equals(body('Read_stack')?['properties']?['resources'],null)),equals(toLower(body('Read_stack')?['id']),toLower(body('Read_current')?['stackId'])),equals(body('Read_stack')?['tags']?['runId'],body('Read_current')?['runId']),equals(body('Read_stack')?['tags']?['application'],'called-it'),equals(body('Read_stack')?['tags']?['environment'],'test'),equals(toLower(body('Read_stack')?['properties']?['deploymentScope']),toLower(parameters('runGroupId'))),equals(body('Read_stack')?['properties']?['denySettings']?['mode'],'none'),contains(createArray('creating','validating','waiting','deploying','canceling','updatingdenyassignments','deletingresources','deleting','succeeded','failed','canceled'),toLower(coalesce(body('Read_stack')?['properties']?['provisioningState'],''))))",
+                        "actions": {
+                          "Deployment_busy": {
+                            "type": "If",
+                            "expression": "@contains(createArray('creating','validating','waiting','deploying','canceling','updatingdenyassignments'),toLower(coalesce(body('Read_stack')?['properties']?['provisioningState'],'')))",
+                            "actions": {
+                              "Check_deployment_scope": {
+                                "type": "If",
+                                "expression": "@startsWith(toLower(coalesce(body('Read_stack')?['properties']?['deploymentId'],'')),concat(toLower(parameters('runGroupId')),'/providers/microsoft.resources/deployments/'))",
                                 "actions": {
-                                  "Delete_owned_stack": {
+                                  "Cancel_inflight": {
                                     "type": "Http",
                                     "inputs": {
-                                      "method": "DELETE",
-                                      "uri": "@concat('https://management.azure.com',concat(body('Read_current')?['stackId'],'?api-version=2024-03-01&unmanageAction.Resources=delete&unmanageAction.ResourceGroups=detach&unmanageAction.ManagementGroups=detach'))",
+                                      "method": "POST",
+                                      "uri": "@concat('https://management.azure.com',concat(body('Read_stack')?['properties']?['deploymentId'],'/cancel?api-version=2022-09-01'))",
                                       "authentication": {
                                         "type": "ManagedServiceIdentity",
                                         "identity": "@parameters('identityId')",
@@ -630,50 +1077,152 @@
                                     },
                                     "runAfter": {}
                                   }
+                                },
+                                "else": {
+                                  "actions": {
+                                    "Missing_deployment": {
+                                      "type": "Terminate",
+                                      "inputs": {
+                                        "runStatus": "Failed",
+                                        "runError": {
+                                          "code": "DeploymentBusy",
+                                          "message": "Stack deployment is still busy. Retry after it settles; never delete untracked resources."
+                                        }
+                                      },
+                                      "runAfter": {}
+                                    }
+                                  }
+                                },
+                                "runAfter": {}
+                              }
+                            },
+                            "else": {
+                              "actions": {
+                                "Already_deleting": {
+                                  "type": "If",
+                                  "expression": "@contains(createArray('deletingresources','deleting'),toLower(coalesce(body('Read_stack')?['properties']?['provisioningState'],'')))",
+                                  "actions": {
+                                    "Await_provider": {
+                                      "type": "Compose",
+                                      "inputs": "Teardown is in progress; the next watchdog check verifies completion.",
+                                      "runAfter": {}
+                                    }
+                                  },
+                                  "else": {
+                                    "actions": {
+                                      "Delete_owned_stack": {
+                                        "type": "Http",
+                                        "inputs": {
+                                          "method": "DELETE",
+                                          "uri": "@concat('https://management.azure.com',concat(body('Read_current')?['stackId'],'?api-version=2024-03-01&unmanageAction.Resources=delete&unmanageAction.ResourceGroups=detach&unmanageAction.ManagementGroups=detach'))",
+                                          "authentication": {
+                                            "type": "ManagedServiceIdentity",
+                                            "identity": "@parameters('identityId')",
+                                            "audience": "https://management.azure.com/"
+                                          },
+                                          "retryPolicy": {
+                                            "type": "none"
+                                          }
+                                        },
+                                        "operationOptions": "DisableAsyncPattern",
+                                        "limit": {
+                                          "timeout": "PT20S"
+                                        },
+                                        "runAfter": {}
+                                      }
+                                    }
+                                  },
+                                  "runAfter": {}
+                                }
+                              }
+                            },
+                            "runAfter": {}
+                          }
+                        },
+                        "else": {
+                          "actions": {
+                            "Refuse_foreign": {
+                              "type": "Terminate",
+                              "inputs": {
+                                "runStatus": "Failed",
+                                "runError": {
+                                  "code": "UnsafeStack",
+                                  "message": "Refusing a stack with foreign resources, unexpected ownership, scope, or deny settings."
                                 }
                               },
                               "runAfter": {}
                             }
                           }
                         },
-                        "runAfter": {}
+                        "runAfter": {
+                          "Foreign_resources": [
+                            "Succeeded"
+                          ]
+                        }
                       }
                     },
                     "else": {
                       "actions": {
-                        "Refuse_foreign": {
+                        "Stack_read_failed": {
                           "type": "Terminate",
                           "inputs": {
                             "runStatus": "Failed",
                             "runError": {
-                              "code": "UnsafeStack",
-                              "message": "Refusing a stack with foreign resources, unexpected ownership, scope, or deny settings."
+                              "code": "StackReadFailed",
+                              "message": "Unable to inspect the disposable stack. Cleanup was not attempted."
                             }
                           },
                           "runAfter": {}
                         }
                       }
                     },
-                    "runAfter": {
-                      "Foreign_resources": [
-                        "Succeeded"
-                      ]
-                    }
+                    "runAfter": {}
                   }
-                },
-                "else": {
-                  "actions": {
-                    "Stack_read_failed": {
-                      "type": "Terminate",
-                      "inputs": {
-                        "runStatus": "Failed",
-                        "runError": {
-                          "code": "StackReadFailed",
-                          "message": "Unable to inspect the disposable stack. Cleanup was not attempted."
-                        }
-                      },
-                      "runAfter": {}
+                }
+              },
+              "runAfter": {
+                "Read_stack": [
+                  "Succeeded",
+                  "Failed",
+                  "TimedOut"
+                ]
+              }
+            },
+            "Cleanup_deadline": {
+              "type": "If",
+              "expression": "@and(not(equals(actions('Write_idle')?['status'],'Succeeded')),lessOrEquals(ticks(addMinutes(coalesce(body('Read_current')?['stopRequestedAt'],utcNow()),20)),ticks(utcNow())))",
+              "actions": {
+                "Cleanup_overdue": {
+                  "type": "Terminate",
+                  "inputs": {
+                    "runStatus": "Failed",
+                    "runError": {
+                      "code": "CleanupOverdue",
+                      "message": "TEST cleanup is still incomplete after 20 minutes. Inspect stack/provider operations; paid resources may remain. Later checks continue retrying."
                     }
+                  },
+                  "runAfter": {}
+                }
+              },
+              "else": {
+                "actions": {}
+              },
+              "runAfter": {
+                "Stack_result": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "Refuse_unsettled_cleanup": {
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "code": "UnresolvedSubmission",
+                    "message": "Every submission must be conclusively reconciled before deletion. Keep the run owned in Stopping."
                   }
                 },
                 "runAfter": {}
@@ -681,34 +1230,7 @@
             }
           },
           "runAfter": {
-            "Read_stack": [
-              "Succeeded",
-              "Failed",
-              "TimedOut"
-            ]
-          }
-        },
-        "Cleanup_deadline": {
-          "type": "If",
-          "expression": "@and(not(equals(actions('Write_idle')?['status'],'Succeeded')),lessOrEquals(ticks(addMinutes(coalesce(body('Read_current')?['stopRequestedAt'],utcNow()),20)),ticks(utcNow())))",
-          "actions": {
-            "Cleanup_overdue": {
-              "type": "Terminate",
-              "inputs": {
-                "runStatus": "Failed",
-                "runError": {
-                  "code": "CleanupOverdue",
-                  "message": "TEST cleanup is still incomplete after 20 minutes. Inspect stack/provider operations; paid resources may remain. Later checks continue retrying."
-                }
-              },
-              "runAfter": {}
-            }
-          },
-          "else": {
-            "actions": {}
-          },
-          "runAfter": {
-            "Stack_result": [
+            "Cleanup_pending": [
               "Succeeded"
             ]
           }
@@ -718,7 +1240,7 @@
         "actions": {}
       },
       "runAfter": {
-        "Idle": [
+        "Reconcile_claimed_run": [
           "Succeeded"
         ]
       }

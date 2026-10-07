@@ -58,6 +58,8 @@ The database, vault and controller storage have `CanNotDelete` locks.
 `infra/test/run.bicep` is deployed through one resource-group deployment stack with a
 unique random run ID. Its three successive versions are network/registry, migration
 Job, then application. Images must be digest-addressed images from that run's ACR.
+Every PUT also has a distinct durable submission ID, stamped on both the stack and
+the underlying Bicep deployment parameters.
 There is no placeholder image, `latest` release, or imperative Container App update.
 Removing stack-owned resources uses `actionOnUnmanage.resources=delete`; resource
 groups remain detached rather than being deleted by the controller.
@@ -163,10 +165,15 @@ Start performs these phases, in order:
 1. Verify scope/providers, private SQL, watchdog heartbeat, secret-version metadata,
    Docker availability and absence of old disposable/managed resources.
 2. Lease the state blob; require Idle; allocate a unique run and persist Starting plus
-   its four-hour expiry **before** provisioning paid resources.
+   its four-hour expiry **before** provisioning paid resources. Before **each** stack
+   PUT, persist its submission/client-request IDs and the prior deployment generation.
 3. Compile/apply Bicep network/registry stage. Build the migration and API+web images
    on the runner, push to ACR, resolve immutable digests.
 4. Apply the Job stage, start one execution inside the VNet, and require success.
+   An empty 202 Job-start response is followed through its validated ARM operation URL
+   to an execution result, then that execution's status is checked. If both headers
+   exist, `Azure-AsyncOperation` is awaited before retrieving `Location`; an operation
+   status object's `name` is not assumed to identify a Job execution.
 5. Apply the API stage with the agreed settings, require database readiness, a served
    HTML page and its same-origin JavaScript assets, then record Running and print the
    non-secret HTTPS URL/run ID.
@@ -272,11 +279,32 @@ work; this deployment does not produce a native binary.
 
 ## Expiry, failure and teardown verification
 
-The authoritative non-secret blob records scope, phase, run ID, stack ID and expiry.
+The authoritative non-secret blob records scope, phase, run ID, stack ID, expiry and
+a schema-v2 submission ledger. There can be only one unresolved PUT at a time.
 Start/Extend/Stop use a finite 60-second blob lease; long local operations renew it
 and abort further requests if renewal fails. The watchdog observes every five minutes,
 reacquires the lease, rereads the current run/deadline and claims Stopping before
 teardown. A stale observation cannot undo Extend or delete a newer run.
+
+**A client timeout or cancellation does not cancel an ARM PUT.** Its intent remains
+durable even when the stack is currently 404 and the resource inventory is empty.
+Both the CLI and watchdog reconcile pending submissions **before any stack deletion**
+and check the ledger again before writing Idle. A terminal, validated ARM LRO receipt
+can settle a submission. If that receipt was lost, fallback evidence requires the
+submission marker in both stack and associated ARM deployment parameters, changed
+stack correlation, a changed deployment ID or deployment correlation, and terminal
+states in both. A new tag paired with an old successful generation is not proof.
+A statusless 200/204 response alone is not proof either; it still requires the
+associated-generation checks.
+
+When no conclusive evidence is available, Stop fails closed in **Stopping**, keeps
+the pending record, alerts, and blocks another Start. Status includes the submission
+ID, client request ID, any saved operation URL, and prior generation IDs for Azure
+deployment/activity-history investigation. Later ticks retry reconciliation and
+delete the resulting stack once it is safe. Do not clear the ledger, force Idle, or
+treat a quiet interval as proof that a delayed request cannot materialize.
+If Azure cannot provide authoritative completion evidence, retain this blocked state
+and escalate the recorded identifiers to the operator/Azure support.
 
 Cleanup validates exact stack ID, ownership tags, resource inventory restricted to
 the run RG, deployment scope and `denySettings=none`. It cancels a safely scoped
@@ -295,6 +323,19 @@ A provider delete that remains in progress after 20 minutes also causes failed,
 alerting ticks without disabling later retries. A second metric alert watches for
 missing workflow starts over 15 minutes. Missing metric data or monitoring outages
 can still delay/suppress notifications; neither alert is a substitute for verifying Off.
+
+The CLI understands the stack API's documented lowercase/camelCase states, including
+`waiting`, `updatingDenyAssignments` and `deletingResources`; an unknown state is never
+treated as permission to delete. Job and stack LRO URLs must stay on the approved ARM
+host/subscription and the expected provider/region or run resource scope. Tracking
+regional LRO endpoints requires resource-group-level permissions, already supplied by
+the deployer's Contributor and cleanup identity's read grants, rather than broadening
+them to subscription Contributor. Azure CLI tokens are cached independently per
+audience only until their actual `expires_on` timestamp minus 60 seconds.
+
+Use the matching schema-v2 CLI **and** watchdog before the first launch. Older state
+blobs/writers are rejected; they are not silently upgraded because they may have
+unrecorded in-flight requests. Start/Extend also verify the watchdog protocol version.
 
 The watchdog and Owner email/budget alerts are safeguards, **not a hard billing
 cap or availability guarantee**. Azure outages, missed ticks, deleted/disabled
@@ -325,7 +366,7 @@ Approximate public USD retail prices for East US 2, excluding tax/agreements:
 | Cost source | Planning estimate |
 | --- | --- |
 | Retained SQL Basic, 5 DTU / 2 GiB | $0.161/day, approximately $4.90/month |
-| Retained watchdog, blob, KV, two metric alerts | Usually below $1/month at this scale; action/request based |
+| Retained watchdog, blob, KV, two metric alerts | Around $1/month at this scale; action/request based |
 | **Off baseline** | **About $5-6/month**, not zero |
 | Disposable external custom-VNet ACA load balancer | $0.025/hour |
 | Two ACA-managed Standard public IPv4 addresses | $0.005/hour each |
@@ -368,6 +409,7 @@ References: [Azure retail prices](https://prices.azure.com/api/retail/prices),
 [ACA billing](https://learn.microsoft.com/azure/container-apps/billing),
 [SQL identity/SID](https://learn.microsoft.com/azure/azure-sql/database/authentication-azure-ad-user-assigned-managed-identity),
 [deployment stacks](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deployment-stacks),
+[ARM asynchronous operations and permissions](https://learn.microsoft.com/azure/azure-resource-manager/management/async-operations),
 [blob leases](https://learn.microsoft.com/rest/api/storageservices/lease-blob),
 [budget notifications](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-acm-create-budgets),
 [daily log caps](https://learn.microsoft.com/azure/azure-monitor/logs/daily-cap).

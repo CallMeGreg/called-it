@@ -2,6 +2,7 @@ using './run.bicep'
 
 // Compilation fixture only. Lifecycle code supplies actual ARM-derived values and digests.
 param runId = '00000000000000000000000000000000'
+param submissionId = '00000000-0000-0000-0000-000000000000'
 param foundation = {
   sqlServerId: '/subscriptions/b5ccc8c6-8222-4b70-83a3-3d7de1e5920f/resourceGroups/called-it-test-data/providers/Microsoft.Sql/servers/compile-only'
   sqlFqdn: 'compile-only.database.windows.net'

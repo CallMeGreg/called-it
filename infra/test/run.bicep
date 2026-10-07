@@ -14,6 +14,11 @@ param location string = 'eastus2'
 @description('Unique lowercase hexadecimal run ID. Never reuse after Stop.')
 param runId string
 
+@minLength(36)
+@maxLength(36)
+@description('Unique durable submission marker. A different value is required for every stack PUT.')
+param submissionId string
+
 @description('Non-secret outputs of the retained foundation.')
 param foundation object
 
@@ -34,6 +39,7 @@ var tags = {
   managedBy: 'bicep'
   lifecycle: 'disposable'
   runId: runId
+  submissionId: submissionId
 }
 
 resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {

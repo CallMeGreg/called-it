@@ -5,15 +5,16 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { Azure, sleep } from './azure.mjs';
 import { CONFIG, GROUP_ID, DATA_GROUP_ID, MANAGED_GROUP_ID, STACK_API, assertDigest, requireValue, stackId } from './config.mjs';
-import { StateStore, idleState, startState, extendState, stopState, validateState } from './state.mjs';
+import { StateStore, idleState, startState, extendState, stopState, validateState, pendingSubmission, beginSubmission, updateSubmission, validDeploymentId } from './state.mjs';
 import { hashes, readBundle, parseBundle, writePrivate, assertBundleUpdate } from './invites.mjs';
+import { PROTOCOL, STACK_STATES, stackPhase, responseOperationUrl, responseOperationUrls, operationUrl, operationPhase, armPath } from './operations.mjs';
+import { generationCandidate, generationEvidence } from './submissions.mjs';
 
-const TERMINAL_FAILURE = ['Failed', 'Canceled', 'Cancelled', 'DeploymentFailed', 'DeleteFailed'];
-const BUSY = ['Creating', 'Updating', 'Validating', 'Deploying', 'Canceling'];
 const SECRET_NAMES = { signingKey: 'auth-signing-key', contactsPepper: 'contacts-pepper', invitesJson: 'test-invites' };
 const printable = (state) => ({
   phase: state.phase, runId: state.runId, expiresAt: state.expiresAt, url: state.url,
   lastError: state.lastError ?? null,
+  pendingSubmission: pendingSubmission(state),
   retained: ['SQL accounts/results', 'Key Vault keys/invites', 'lifecycle controller'],
 });
 
@@ -29,6 +30,14 @@ export function assertOwnedStack(stack, state) {
     requireValue(typeof resource.id === 'string'
       && resource.id.toLowerCase().startsWith(`${GROUP_ID.toLowerCase()}/providers/`),
     'Refusing teardown: the stack owns a resource outside the disposable TEST group.');
+  }
+}
+
+export class UnresolvedSubmissionError extends Error {
+  constructor(submission) {
+    super(`Stack submission ${submission.id} (client request ${submission.clientRequestId}) is unresolved. `
+      + `Inspect its ${submission.operationUrl ? `ARM operation ${submission.operationUrl}` : 'Azure deployment/activity history and generation marker'}. `
+      + 'Ownership remains Stopping; a 404 or empty inventory is not completion evidence. Do not clear the ledger or start another run.');
   }
 }
 
@@ -69,6 +78,8 @@ export class Lifecycle {
   async watcherReady() {
     const workflow = (await this.azure.arm(`${this.foundation.watchdogId}?api-version=2019-05-01`)).body;
     requireValue(workflow?.properties?.state === 'Enabled', 'The independent expiry watchdog is not enabled. Refusing Start/Extend.');
+    requireValue(workflow.properties.definition?.contentVersion === `${PROTOCOL.stateVersion}.0.0.0`,
+      'The expiry watchdog does not support this submission-ledger version. Deploy the matching foundation before Start/Extend.');
     requireValue(workflow.properties.definition?.triggers?.Check_expiry?.recurrence?.interval === 5
       && workflow.properties.definition.triggers.Check_expiry.recurrence.frequency === 'Minute'
       && workflow.properties.definition.triggers.Check_expiry.runtimeConfiguration?.concurrency?.runs === 1,
@@ -107,38 +118,103 @@ export class Lifecycle {
       assertDigest(apiImage, registryServer, 'called-it-api');
       requireValue(migrationImage, 'The application cannot be deployed before its migration image.');
     }
-    await this.store.locked(async (current, _write, signal) => {
+    let submission;
+    await this.store.locked(async (current, write, signal) => {
       requireValue(current.runId === runId && current.phase === 'Starting'
         && Date.parse(current.expiresAt) > this.now().getTime(), 'Start lost its lifecycle claim.');
-      await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`, {
-        method: 'PUT', allowed: [200, 201], signal,
+      requireValue(!pendingSubmission(current), 'An unresolved PUT must be reconciled before another submission.');
+      const previous = await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`, { allowed: [200, 404], signal });
+      let baseline = {};
+      if (previous.status === 200) {
+        assertOwnedStack(previous.body, current);
+        requireValue(stackPhase(previous.body.properties.provisioningState) === 'succeeded', 'The prior stack generation is not successful.');
+        const preceding = current.submissions.at(-1);
+        requireValue(preceding?.status === 'terminal' && preceding.result === 'succeeded',
+          'An existing stack must be associated with the preceding successful submission.');
+        const deploymentId = previous.body.properties.deploymentId;
+        requireValue(validDeploymentId(deploymentId), 'The prior stack deployment generation is unavailable.');
+        const deployment = (await this.azure.arm(`${deploymentId}?api-version=2022-09-01`, { signal })).body;
+        requireValue(generationEvidence(preceding, previous.body, deployment)?.result === 'succeeded',
+          'The prior stack/deployment snapshot is stale or not associated with the preceding submission.');
+        baseline = {
+          stackCorrelationId: previous.body.properties.correlationId,
+          deploymentId,
+          deploymentCorrelationId: deployment.properties?.correlationId,
+        };
+        requireValue(baseline.stackCorrelationId && baseline.deploymentCorrelationId, 'Missing prior generation correlation IDs.');
+      } else requireValue(current.submissions.length === 0, 'The preceding stack generation disappeared; refusing an untracked replacement PUT.');
+      const intent = beginSubmission(current, baseline, this.now());
+      submission = pendingSubmission(intent);
+      // This write must succeed before sending any bytes of a potentially ambiguous ARM PUT.
+      await write(intent);
+      const response = await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`, {
+        method: 'PUT', allowed: [200, 201, 202], signal,
+        headers: { 'x-ms-client-request-id': submission.clientRequestId },
         body: {
           location: CONFIG.location,
-          tags: { application: 'called-it', environment: 'test', runId },
+          tags: { application: 'called-it', environment: 'test', runId, submissionId: submission.id },
           properties: {
             actionOnUnmanage: { resources: 'delete', resourceGroups: 'detach', managementGroups: 'detach' },
             denySettings: { mode: 'none' },
             deploymentScope: GROUP_ID,
             template,
             parameters: Object.fromEntries(Object.entries({
-              runId, foundation: this.foundation, migrationImage, apiImage, secretUris,
+              runId, submissionId: submission.id, foundation: this.foundation, migrationImage, apiImage, secretUris,
             }).map(([name, value]) => [name, { value }])),
           },
         },
       });
+      const url = responseOperationUrl(response, 'Microsoft.Resources', current.stackId);
+      if (url) await write(updateSubmission(intent, submission.id, { operationUrl: url }, this.now()));
     });
     for (let attempt = 0; attempt < 360; attempt++) {
-      const current = await this.active(runId);
+      let current = await this.active(runId);
+      if (pendingSubmission(current)) {
+        const outcome = await this.reconcileSubmission(current);
+        if (!outcome.resolved) { await this.pause(10_000); continue; }
+        requireValue(outcome.result === 'succeeded', `Run stack deployment ${outcome.result}. See Azure deployment operations; private SQL was not opened.`);
+        current = await this.active(runId);
+      }
       const stack = (await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`)).body;
-      const phase = stack.properties?.provisioningState;
-      if (phase === 'Succeeded') {
+      const phase = stackPhase(stack.properties?.provisioningState);
+      if (phase === 'succeeded' && stack.tags?.submissionId === submission.id
+        && stack.properties.parameters?.submissionId?.value === submission.id) {
         assertOwnedStack(stack, current);
         return Object.fromEntries(Object.entries(stack.properties.outputs ?? {}).map(([name, output]) => [name, output.value]));
       }
-      requireValue(!TERMINAL_FAILURE.includes(phase), `Run stack deployment ${phase}. See Azure deployment operations; private SQL was not opened.`);
+      requireValue(!['failed', 'canceled'].includes(phase), `Run stack deployment ${phase}. See Azure deployment operations; private SQL was not opened.`);
       await this.pause(10_000);
     }
     throw new Error('Run stack deployment timed out. Guarded cleanup is required.');
+  }
+
+  async reconcileSubmission(current) {
+    const submission = pendingSubmission(current);
+    if (!submission) return { resolved: true };
+    let proof;
+    if (submission.operationUrl) {
+      const url = operationUrl(submission.operationUrl, 'Microsoft.Resources', current.stackId);
+      const operation = await this.azure.arm(armPath(url), { allowed: [200, 202, 204, 404, 410] });
+      if (operation.status === 200) {
+        const result = operationPhase(operation);
+        if (STACK_STATES.terminal.includes(result)) proof = { result, evidence: { kind: 'lro', operationUrl: url } };
+      }
+    }
+    const response = await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`, { allowed: [200, 404] });
+    if (!proof && response.status === 200 && generationCandidate(submission, response.body)) {
+      assertOwnedStack(response.body, current);
+      const deployment = await this.azure.arm(`${response.body.properties.deploymentId}?api-version=2022-09-01`, { allowed: [200, 404] });
+      if (deployment.status === 200) proof = generationEvidence(submission, response.body, deployment.body);
+    }
+    if (!proof) return { resolved: false, stack: response, submission };
+    await this.store.locked(async (latest, write) => {
+      requireValue(latest.runId === current.runId, 'A submission result cannot settle another run.');
+      if (latest.submissions.find((entry) => entry.id === submission.id)?.status === 'terminal') return;
+      await write(updateSubmission(latest, submission.id, {
+        status: 'terminal', result: proof.result, evidence: proof.evidence, completedAt: this.now().toISOString(),
+      }, this.now()));
+    });
+    return { resolved: true, ...proof };
   }
 
   async secretUris() {
@@ -171,14 +247,47 @@ export class Lifecycle {
   async migrate(jobId, runId) {
     requireValue(jobId.startsWith(`${GROUP_ID}/providers/Microsoft.App/jobs/`), 'Migration Job must belong to the disposable TEST group.');
     let executionName;
+    let result;
     await this.azure.token('https://management.azure.com/');
     await this.store.locked(async (current, _write, signal) => {
       requireValue(current.runId === runId && current.phase === 'Starting'
-        && Date.parse(current.expiresAt) > this.now().getTime(), 'Start lost ownership before migration.');
-      const result = await this.azure.arm(`${jobId}/start?api-version=2025-01-01`, { method: 'POST', allowed: [200, 202], signal });
-      executionName = result.body?.name;
-      requireValue(typeof executionName === 'string' && /^[a-z0-9-]+$/.test(executionName), 'Azure did not identify the migration execution.');
+        && !pendingSubmission(current) && Date.parse(current.expiresAt) > this.now().getTime(),
+      'Start lost ownership or has an unresolved stack submission before migration.');
+      result = await this.azure.arm(`${jobId}/start?api-version=2025-01-01`, { method: 'POST', allowed: [200, 202], signal });
     });
+    let url;
+    let resultUrl;
+    let asynchronous = false;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      await this.active(runId);
+      const next = responseOperationUrls(result, 'Microsoft.App', jobId);
+      if (next.location) resultUrl = next.location;
+      const phase = operationPhase(result);
+      requireValue(!['failed', 'canceled'].includes(phase), `Migration Job start operation ${phase}.`);
+      const executionId = typeof result.body?.id === 'string' && typeof result.body?.name === 'string'
+        && result.body.id.toLowerCase() === `${jobId}/executions/${result.body.name}`.toLowerCase();
+      if (result.status === 200 && typeof result.body?.name === 'string' && (!phase || (phase === 'succeeded' && executionId))) {
+        executionName = result.body.name;
+        requireValue(/^[a-z0-9-]+$/.test(executionName)
+          && (!result.body.id || executionId),
+        'Azure returned an execution outside the expected migration Job.');
+        break;
+      }
+      if (phase === 'succeeded') {
+        requireValue(resultUrl && resultUrl !== url, 'Job start completed without an execution result or a distinct final result URL.');
+        url = resultUrl;
+        resultUrl = null;
+        asynchronous = false;
+      } else if (next.asynchronous) {
+        url = next.asynchronous;
+        asynchronous = true;
+      } else if (!asynchronous && next.location) url = next.location;
+      requireValue(url, 'Azure accepted Job start without a validated operation/result URL.');
+      await this.pause(10_000);
+      await this.active(runId);
+      result = await this.azure.arm(armPath(url), { allowed: [200, 202] });
+    }
+    requireValue(executionName, 'Migration Job start operation timed out before returning an execution.');
     for (let attempt = 0; attempt < 120; attempt++) {
       await this.active(runId);
       const execution = (await this.azure.arm(`${jobId}/executions/${executionName}?api-version=2025-01-01`)).body;
@@ -311,34 +420,42 @@ export class Lifecycle {
     await this.store.locked(async (current, write) => { await write(stopState(current, runId, { now: this.now() })); });
     try {
       for (let attempt = 0; attempt < 240; attempt++) {
-        const current = await this.store.read();
+        let current = await this.store.read();
         if (current.phase === 'Idle' && current.lastRunId === runId) {
           await this.verifyOff();
           return;
         }
         requireValue(current.runId === runId && current.phase === 'Stopping', 'Cleanup lost ownership; refusing any more mutations.');
+        if (pendingSubmission(current)) {
+          const outcome = await this.reconcileSubmission(current);
+          if (!outcome.resolved) throw new UnresolvedSubmissionError(outcome.submission);
+          current = await this.store.read();
+          requireValue(current.runId === runId && current.phase === 'Stopping' && !pendingSubmission(current),
+            'Cleanup must retain ownership until every stack submission is terminal.');
+        }
         const result = await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`, { allowed: [200, 404] });
         if (result.status === 404) {
           const remaining = await this.resources();
           const managed = await this.azure.arm(`${MANAGED_GROUP_ID}?api-version=2024-03-01`, { allowed: [200, 404] });
           if (remaining.length === 0 && managed.status === 404) {
             await this.store.locked(async (latest, write) => {
-              requireValue(latest.runId === runId && latest.phase === 'Stopping', 'Cleanup cannot clear a different run.');
-              await write({ ...idleState(this.now()), lastRunId: runId });
+              requireValue(latest.runId === runId && latest.phase === 'Stopping' && !pendingSubmission(latest),
+                'Cleanup cannot clear a different run or an unresolved submission.');
+              await write({ ...idleState(this.now()), lastRunId: runId, lastSubmissions: latest.submissions });
             });
             console.log('TEST runtime is off. Accounts, results, keys, and the independent expiry controller are retained.');
             return;
           }
         } else {
           assertOwnedStack(result.body, current);
-          const phase = result.body.properties.provisioningState;
-          if (BUSY.includes(phase)) {
+          const phase = stackPhase(result.body.properties.provisioningState);
+          if (STACK_STATES.inFlight.includes(phase)) {
             const deploymentId = result.body.properties.deploymentId;
             requireValue(typeof deploymentId === 'string'
               && deploymentId.toLowerCase().startsWith(`${GROUP_ID.toLowerCase()}/providers/microsoft.resources/deployments/`),
             'Cannot safely cancel the in-flight stack deployment; wait for it to settle.');
             await this.azure.arm(`${deploymentId}/cancel?api-version=2022-09-01`, { method: 'POST', allowed: [200, 202, 204, 409] });
-          } else if (phase !== 'Deleting') {
+          } else if (STACK_STATES.terminal.includes(phase)) {
             await this.azure.arm(`${current.stackId}?api-version=${STACK_API}&unmanageAction.Resources=delete&unmanageAction.ResourceGroups=detach&unmanageAction.ManagementGroups=detach`,
               { method: 'DELETE', allowed: [200, 202, 204] });
           }
@@ -349,7 +466,8 @@ export class Lifecycle {
     } catch (error) {
       await this.store.locked(async (current, write) => {
         if (current.runId === runId && current.phase === 'Stopping') {
-          await write({ ...current, lastError: 'Runtime cleanup failed or timed out. Inspect stack operations and the expiry workflow; paid resources may remain.', updatedAt: this.now().toISOString() });
+          await write({ ...current, lastError: error instanceof UnresolvedSubmissionError ? error.message
+            : 'Runtime cleanup failed or timed out. Inspect stack operations and the expiry workflow; paid resources may remain.', updatedAt: this.now().toISOString() });
         }
       });
       throw error;

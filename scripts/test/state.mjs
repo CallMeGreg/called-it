@@ -1,10 +1,18 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { CONFIG, stackId, requireValue } from './config.mjs';
 import { AzureError } from './azure.mjs';
+import { PROTOCOL, operationUrl } from './operations.mjs';
+
+const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const terminalResults = ['succeeded', 'failed', 'canceled'];
+
+export function pendingSubmission(state) {
+  return state.submissions.find((submission) => submission.status === 'pending') ?? null;
+}
 
 export function idleState(now = new Date()) {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROTOCOL.stateVersion,
     subscriptionId: CONFIG.subscriptionId,
     tenantId: CONFIG.tenantId,
     phase: 'Idle',
@@ -14,22 +22,77 @@ export function idleState(now = new Date()) {
     updatedAt: now.toISOString(),
     url: null,
     lastError: null,
+    submissions: [],
   };
 }
 
 export function validateState(value) {
-  requireValue(value?.schemaVersion === 1 && value.subscriptionId === CONFIG.subscriptionId
+  requireValue(value?.schemaVersion === PROTOCOL.stateVersion && value.subscriptionId === CONFIG.subscriptionId
     && value.tenantId === CONFIG.tenantId, 'Invalid TEST lifecycle scope/schema; refusing mutation.');
   requireValue(['Idle', 'Starting', 'Running', 'Stopping'].includes(value.phase), 'Invalid lifecycle phase.');
+  requireValue(Array.isArray(value.submissions) && value.submissions.length <= 3, 'Missing or invalid durable submission ledger.');
+  const ids = new Set();
+  for (const submission of value.submissions) {
+    requireValue(submission && guid.test(submission.id) && guid.test(submission.clientRequestId)
+      && !ids.has(submission.id) && Number.isFinite(Date.parse(submission.submittedAt)), 'Invalid submission identity/timestamp.');
+    ids.add(submission.id);
+    requireValue(['pending', 'terminal'].includes(submission.status), 'Invalid submission status.');
+    requireValue(submission.operationUrl === null || typeof submission.operationUrl === 'string', 'Invalid submission operation URL.');
+    if (submission.operationUrl) operationUrl(submission.operationUrl, 'Microsoft.Resources', value.stackId);
+    for (const key of ['previousStackCorrelationId', 'previousDeploymentCorrelationId']) {
+      requireValue(submission[key] === null || guid.test(submission[key]), 'Invalid prior submission correlation ID.');
+    }
+    requireValue(submission.previousDeploymentId === null || validDeploymentId(submission.previousDeploymentId), 'Invalid prior deployment scope.');
+    requireValue(submission.status === 'pending' ? submission.result === null : terminalResults.includes(submission.result),
+      'Submission terminal evidence is incomplete.');
+    if (submission.status === 'terminal') {
+      requireValue(Number.isFinite(Date.parse(submission.completedAt))
+        && ['lro', 'deployment-generation'].includes(submission.evidence?.kind), 'Submission completion requires durable terminal evidence.');
+    }
+  }
+  requireValue(value.submissions.filter((submission) => submission.status === 'pending').length <= 1
+    && (!pendingSubmission(value) || value.submissions.at(-1).status === 'pending'), 'Only the latest submission may be unresolved.');
   if (value.phase === 'Idle') {
     requireValue(value.runId === null && value.stackId === null && value.expiresAt === null && value.url === null,
       'Idle state has an unexpected active run.');
+    requireValue(value.submissions.length === 0, 'Idle cannot conceal unresolved or uncleared submissions.');
   } else {
     requireValue(value.stackId === stackId(value.runId), 'Lifecycle stack ID does not match its run.');
     requireValue(typeof value.expiresAt === 'string' && Number.isFinite(Date.parse(value.expiresAt)),
       'Invalid run expiry timestamp.');
   }
   return value;
+}
+
+export function validDeploymentId(id) {
+  const prefix = `/subscriptions/${CONFIG.subscriptionId}/resourceGroups/${CONFIG.runGroup}/providers/Microsoft.Resources/deployments/`;
+  return typeof id === 'string' && id.toLowerCase().startsWith(prefix.toLowerCase())
+    && /^[a-z0-9_.()-]+$/i.test(id.slice(prefix.length));
+}
+
+export function beginSubmission(current, baseline, now = new Date()) {
+  validateState(current);
+  requireValue(current.phase === 'Starting' && !pendingSubmission(current) && current.submissions.length < 3,
+    'A new stack PUT cannot supersede unresolved submission intent.');
+  const submission = {
+    id: randomUUID(), clientRequestId: randomUUID(), submittedAt: now.toISOString(),
+    previousStackCorrelationId: baseline.stackCorrelationId ?? null,
+    previousDeploymentId: baseline.deploymentId ?? null,
+    previousDeploymentCorrelationId: baseline.deploymentCorrelationId ?? null,
+    status: 'pending', operationUrl: null, result: null, evidence: null, completedAt: null,
+  };
+  return validateState({ ...current, submissions: [...current.submissions, submission], updatedAt: now.toISOString() });
+}
+
+export function updateSubmission(current, id, patch, now = new Date()) {
+  validateState(current);
+  requireValue(['Starting', 'Stopping'].includes(current.phase)
+    && pendingSubmission(current)?.id === id, 'Submission reconciliation lost the active run/generation.');
+  return validateState({
+    ...current,
+    submissions: current.submissions.map((submission) => submission.id === id ? { ...submission, ...patch } : submission),
+    updatedAt: now.toISOString(),
+  });
 }
 
 export function startState(current, { now = new Date(), hours = CONFIG.defaultHours, runId = randomBytes(16).toString('hex') } = {}) {
