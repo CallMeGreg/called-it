@@ -30,7 +30,8 @@ public sealed class ContactsService
         }
 
         var matches = await _db.Users
-            .Where(u => u.Id != currentUserId && u.DiscoverableByPhone && hashes.Contains(u.PhoneHash))
+            .Where(u => u.Id != currentUserId && u.TestInviteId == null
+                && u.DiscoverableByPhone && u.PhoneHash != null && hashes.Contains(u.PhoneHash))
             .Select(u => new ContactMatch(u.Id, u.DisplayName))
             .ToListAsync(ct);
 

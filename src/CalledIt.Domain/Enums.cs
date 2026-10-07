@@ -43,6 +43,7 @@ public enum DailySetStatus
 {
     Scheduled = 0,
     Published = 1,
+    Completed = 2,
 }
 
 public enum SocialProvider

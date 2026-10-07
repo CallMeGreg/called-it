@@ -16,17 +16,25 @@ public sealed class DailySetService
     private readonly IAppDbContext _db;
     private readonly IClock _clock;
     private readonly GameOptions _game;
+    private readonly TestModeOptions _testMode;
 
-    public DailySetService(IAppDbContext db, IClock clock, IOptions<GameOptions> game)
+    public DailySetService(
+        IAppDbContext db, IClock clock, IOptions<GameOptions> game, IOptions<TestModeOptions> testMode)
     {
         _db = db;
         _clock = clock;
         _game = game.Value;
+        _testMode = testMode.Value;
     }
 
     /// <summary>Assemble and publish the daily set that drops at <paramref name="dropAtUtc"/>.</summary>
     public async Task<DailySetView> BuildAsync(DateTimeOffset dropAtUtc, CancellationToken ct = default)
     {
+        if (_testMode.Enabled)
+        {
+            throw new ForbiddenException("TEST rounds are created by reading /api/test/game.");
+        }
+
         var locksAt = dropAtUtc.AddHours(_game.SubmissionWindowHours);
 
         var set = new DailySet
@@ -63,7 +71,7 @@ public sealed class DailySetService
     {
         var now = _clock.UtcNow;
         var set = await _db.DailySets
-            .Where(s => s.DropAtUtc <= now)
+            .Where(s => s.IsTest == _testMode.Enabled && s.DropAtUtc <= now)
             .OrderByDescending(s => s.DropAtUtc)
             .FirstOrDefaultAsync(ct);
 
@@ -74,7 +82,7 @@ public sealed class DailySetService
     {
         var set = await _db.DailySets
             .Include(s => s.Items).ThenInclude(i => i.Question)
-            .FirstOrDefaultAsync(s => s.Id == setId, ct);
+            .FirstOrDefaultAsync(s => s.Id == setId && s.IsTest == _testMode.Enabled, ct);
 
         if (set is null)
         {
@@ -104,7 +112,9 @@ public sealed class DailySetService
                     i.Question.SideBLabel,
                     g?.Pick,
                     g?.IsSkip ?? false,
-                    i.Question.Outcome.ToString());
+                    set.IsTest && _clock.UtcNow < set.LocksAtUtc
+                        ? Outcome.Unresolved.ToString()
+                        : i.Question.Outcome.ToString());
             })
             .ToList();
 

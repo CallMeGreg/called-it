@@ -7,6 +7,9 @@ namespace CalledIt.Application.Common;
 /// </summary>
 public static class LeaderboardKeys
 {
+    public const string TestPrefix = "test:";
+    public static string InMode(string key, bool isTest) => isTest ? TestPrefix + key : key;
+
     public static string CategoryStreak(string categoryCode) => $"streak:{categoryCode}";
     public static string CategoryBestStreak(string categoryCode) => $"beststreak:{categoryCode}";
     public const string OverallStreak = "streak:overall";

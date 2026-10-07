@@ -7,10 +7,14 @@ public sealed record LeaderboardEntry(string Member, double Score, long Rank);
 /// implementation for local/dev). Boards are addressed by a string key such as
 /// "streak:sports:global" or "total:friends:{userId}".
 /// </summary>
-public interface ILeaderboardStore
+public interface ILeaderboardStore : ILeaderboardReader
 {
     Task SetScoreAsync(string boardKey, string member, double score, CancellationToken ct = default);
+}
 
+/// <summary>Ranked reads, either from a cache or directly from durable scores and streaks.</summary>
+public interface ILeaderboardReader
+{
     Task<IReadOnlyList<LeaderboardEntry>> TopAsync(string boardKey, int count, CancellationToken ct = default);
 
     Task<LeaderboardEntry?> GetAsync(string boardKey, string member, CancellationToken ct = default);

@@ -18,6 +18,7 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddSingleton(configuration);
         // --- Options ---
         services.Configure<ContactsOptions>(configuration.GetSection(ContactsOptions.SectionName));
         services.Configure<SocialAuthOptions>(configuration.GetSection(SocialAuthOptions.SectionName));
@@ -41,6 +42,7 @@ public static class DependencyInjection
         });
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
         services.AddScoped<DbInitializer>();
+        services.AddScoped<ITestModeTransaction, TestModeTransaction>();
 
         // --- Core services ---
         services.AddSingleton<IClock, SystemClock>();
@@ -82,16 +84,33 @@ public static class DependencyInjection
             services.AddScoped<IPushSender, DevPushSender>();
         }
 
-        // --- Leaderboards (Redis when configured, otherwise in-memory) ---
+        // --- Leaderboards (explicit provider, with the existing auto-detection as default) ---
         var redisConn = configuration.GetConnectionString("Redis");
-        if (!string.IsNullOrWhiteSpace(redisConn))
+        var boardsProvider = configuration["Leaderboards:Provider"]
+            ?? (string.IsNullOrWhiteSpace(redisConn) ? "InMemory" : "Redis");
+        if (boardsProvider.Equals("Database", StringComparison.OrdinalIgnoreCase))
         {
+            services.AddScoped<ILeaderboardReader, DatabaseLeaderboardReader>();
+        }
+        else if (boardsProvider.Equals("Redis", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(redisConn))
+            {
+                throw new InvalidOperationException("ConnectionStrings:Redis is required for Leaderboards:Provider=Redis.");
+            }
+
             services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConn));
             services.AddScoped<ILeaderboardStore, RedisLeaderboardStore>();
+            services.AddScoped<ILeaderboardReader>(sp => sp.GetRequiredService<ILeaderboardStore>());
+        }
+        else if (boardsProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddSingleton<ILeaderboardStore, InMemoryLeaderboardStore>();
+            services.AddSingleton<ILeaderboardReader>(sp => sp.GetRequiredService<ILeaderboardStore>());
         }
         else
         {
-            services.AddSingleton<ILeaderboardStore, InMemoryLeaderboardStore>();
+            throw new InvalidOperationException("Leaderboards:Provider must be Database, Redis, or InMemory.");
         }
 
         // --- Resolution providers ---

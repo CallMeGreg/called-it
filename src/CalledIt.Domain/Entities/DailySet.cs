@@ -12,6 +12,8 @@ public class DailySet
     public DateTimeOffset DropAtUtc { get; set; }
     public DateTimeOffset LocksAtUtc { get; set; }
 
+    public bool IsTest { get; set; }
+
     public DailySetStatus Status { get; set; } = DailySetStatus.Scheduled;
 
     public ICollection<DailySetItem> Items { get; set; } = new List<DailySetItem>();

@@ -3,6 +3,7 @@ using CalledIt.Application.Common;
 using CalledIt.Domain;
 using CalledIt.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace CalledIt.Application.Scoring;
 
@@ -13,12 +14,14 @@ namespace CalledIt.Application.Scoring;
 public sealed class LeaderboardService
 {
     private readonly IAppDbContext _db;
-    private readonly ILeaderboardStore _boards;
+    private readonly ILeaderboardReader _boards;
+    private readonly TestModeOptions _testMode;
 
-    public LeaderboardService(IAppDbContext db, ILeaderboardStore boards)
+    public LeaderboardService(IAppDbContext db, ILeaderboardReader boards, IOptions<TestModeOptions> testMode)
     {
         _db = db;
         _boards = boards;
+        _testMode = testMode.Value;
     }
 
     public async Task<LeaderboardResult> GetAsync(
@@ -29,7 +32,7 @@ public sealed class LeaderboardService
         int count = 50,
         CancellationToken ct = default)
     {
-        var boardKey = ResolveKey(type, categoryCode);
+        var boardKey = LeaderboardKeys.InMode(ResolveKey(type, categoryCode), _testMode.Enabled);
 
         IReadOnlyList<LeaderboardEntry> entries;
         if (scope == BoardScope.Global)

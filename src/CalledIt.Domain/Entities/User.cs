@@ -1,15 +1,18 @@
 namespace CalledIt.Domain.Entities;
 
-/// <summary>A player, anchored by a verified phone number (the social-graph key).</summary>
+/// <summary>A player anchored by a verified phone, or an isolated TEST invite.</summary>
 public class User
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
     /// <summary>Verified phone number in E.164 form. Primary human identity.</summary>
-    public string PhoneE164 { get; set; } = string.Empty;
+    public string? PhoneE164 { get; set; }
 
     /// <summary>HMAC hash of the phone number, used for privacy-preserving contact matching.</summary>
-    public string PhoneHash { get; set; } = string.Empty;
+    public string? PhoneHash { get; set; }
+
+    /// <summary>Non-secret, stable TEST identity. Never linked to a phone or social account.</summary>
+    public string? TestInviteId { get; set; }
 
     public string DisplayName { get; set; } = string.Empty;
 

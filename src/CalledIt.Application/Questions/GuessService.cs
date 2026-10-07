@@ -3,6 +3,7 @@ using CalledIt.Application.Common;
 using CalledIt.Domain;
 using CalledIt.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace CalledIt.Application.Questions;
 
@@ -18,15 +19,30 @@ public sealed class GuessService
 {
     private readonly IAppDbContext _db;
     private readonly IClock _clock;
+    private readonly TestModeOptions _testMode;
+    private readonly ITestModeTransaction _testTransaction;
 
-    public GuessService(IAppDbContext db, IClock clock)
+    public GuessService(
+        IAppDbContext db, IClock clock, IOptions<TestModeOptions> testMode, ITestModeTransaction testTransaction)
     {
         _db = db;
         _clock = clock;
+        _testMode = testMode.Value;
+        _testTransaction = testTransaction;
     }
 
-    public async Task<GuessResult> SubmitAsync(Guid userId, SubmitGuessCommand cmd, CancellationToken ct = default)
+    public Task<GuessResult> SubmitAsync(Guid userId, SubmitGuessCommand cmd, CancellationToken ct = default) =>
+        _testMode.Enabled
+            ? _testTransaction.ExecuteAsync(() => SubmitCoreAsync(userId, cmd, ct), ct)
+            : SubmitCoreAsync(userId, cmd, ct);
+
+    private async Task<GuessResult> SubmitCoreAsync(Guid userId, SubmitGuessCommand cmd, CancellationToken ct)
     {
+        if (cmd.Pick is { } pick && !Enum.IsDefined(pick))
+        {
+            throw new ValidationException("Pick must be A or B.");
+        }
+
         if (cmd.Skip && cmd.Pick is not null)
         {
             throw new ValidationException("A guess is either a pick or a skip, not both.");
@@ -43,12 +59,28 @@ public sealed class GuessService
             ?? throw new NotFoundException("Question is not part of any daily set.");
 
         var set = item.DailySet!;
+        if (set.IsTest != _testMode.Enabled)
+        {
+            throw new NotFoundException("Question is not part of any daily set in this mode.");
+        }
+
+        if (_testMode.Enabled && !await _db.Users.AnyAsync(u => u.Id == userId && u.TestInviteId != null, ct))
+        {
+            throw new ForbiddenException("A TEST invite account is required.");
+        }
+
         if (!set.IsOpenAt(_clock.UtcNow))
         {
             throw new SubmissionLockedException();
         }
 
         var guess = await _db.Guesses.FirstOrDefaultAsync(g => g.UserId == userId && g.QuestionId == cmd.QuestionId, ct);
+        var submittedAt = _clock.UtcNow;
+        if (!set.IsOpenAt(submittedAt))
+        {
+            throw new SubmissionLockedException();
+        }
+
         if (guess is null)
         {
             guess = new Guess
@@ -63,7 +95,7 @@ public sealed class GuessService
 
         guess.Pick = cmd.Skip ? null : cmd.Pick;
         guess.IsSkip = cmd.Skip;
-        guess.SubmittedAt = _clock.UtcNow;
+        guess.SubmittedAt = submittedAt;
 
         await _db.SaveChangesAsync(ct);
 

@@ -31,6 +31,7 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<OtpChallenge> OtpChallenges => Set<OtpChallenge>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<TestModeLock> TestModeLocks => Set<TestModeLock>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -49,11 +50,17 @@ public sealed class AppDbContext : DbContext, IAppDbContext
     {
         b.Entity<User>(e =>
         {
-            e.HasIndex(x => x.PhoneE164).IsUnique();
+            e.HasIndex(x => x.PhoneE164).IsUnique().HasFilter("[PhoneE164] IS NOT NULL");
             e.HasIndex(x => x.PhoneHash);
-            e.Property(x => x.PhoneE164).HasMaxLength(20).IsRequired();
-            e.Property(x => x.PhoneHash).HasMaxLength(128).IsRequired();
+            e.HasIndex(x => x.TestInviteId).IsUnique().HasFilter("[TestInviteId] IS NOT NULL");
+            e.Property(x => x.PhoneE164).HasMaxLength(20);
+            e.Property(x => x.PhoneHash).HasMaxLength(128);
+            e.Property(x => x.TestInviteId).HasMaxLength(64);
             e.Property(x => x.DisplayName).HasMaxLength(60).IsRequired();
+            e.ToTable(t => t.HasCheckConstraint("CK_Users_Identity",
+                "([TestInviteId] IS NULL AND [PhoneE164] IS NOT NULL AND [PhoneHash] IS NOT NULL) OR "
+                + "([TestInviteId] IS NOT NULL AND [PhoneE164] IS NULL AND [PhoneHash] IS NULL "
+                + "AND [IsAdmin] = 0 AND [DiscoverableByPhone] = 0)"));
         });
 
         b.Entity<FederatedIdentity>(e =>
@@ -115,7 +122,16 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         b.Entity<DailySet>(e =>
         {
             e.HasIndex(x => x.DropAtUtc);
+            e.HasIndex(x => x.IsTest).IsUnique()
+                .HasFilter("[IsTest] = 1 AND [Status] = 1");
             e.HasMany(x => x.Items).WithOne(i => i.DailySet!).HasForeignKey(i => i.DailySetId);
+        });
+
+        b.Entity<TestModeLock>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.ToTable(t => t.HasCheckConstraint("CK_TestModeLocks_Singleton", "[Id] = 1"));
+            e.HasData(new TestModeLock { Id = 1, Version = 0 });
         });
 
         b.Entity<DailySetItem>(e =>

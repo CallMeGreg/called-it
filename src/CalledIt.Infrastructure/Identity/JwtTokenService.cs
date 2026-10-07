@@ -35,6 +35,11 @@ public sealed class JwtTokenService : ITokenService
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
 
+        if (user.TestInviteId is not null)
+        {
+            claims.Add(new Claim(TestModeOptions.InviteClaim, user.TestInviteId));
+        }
+
         if (user.IsAdmin)
         {
             claims.Add(new Claim(ClaimTypes.Role, AdminRole));

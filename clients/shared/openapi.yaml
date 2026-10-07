@@ -8,8 +8,10 @@ info:
     or Skip before a hard 6-hour lock, questions auto-resolve, and independent per-category streaks
     plus a never-resetting Total Score drive the leaderboards.
 
-    This document is the source of truth the iOS (SwiftUI) client builds
-    against. Generate typed clients with openapi-generator (see clients/README.md).
+    The invite-only TEST POC adds explicitly simulated, shared two-minute rounds behind
+    TestMode:Enabled. Production phone/social authentication and six-hour daily sets are unchanged.
+    The shared Expo/React Native client uses the TEST endpoints for phone-browser play.
+    This document also remains the contract for the existing iOS client.
 servers:
   - url: https://{apiFqdn}
     description: Deployed API (Azure Container Apps)
@@ -22,6 +24,7 @@ servers:
 tags:
   - name: Health
   - name: Auth
+  - name: Test
   - name: Daily
   - name: Leaderboards
   - name: Friends
@@ -45,6 +48,87 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/HealthStatus' }
 
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Database connectivity readiness probe
+      security: []
+      responses:
+        '200':
+          description: Database reachable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+        '503':
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [unavailable] }
+
+  /api/test/login:
+    post:
+      tags: [Test]
+      summary: Sign in with a private TEST invite; never a phone or social account
+      description: >
+        Only available with TestMode:Enabled in Test or Development. Each configured stable invite
+        ID owns one durable, non-admin, non-contact-discoverable account. Display names are not
+        identifiers and may be shared. The raw invite is never persisted or logged.
+        Limited to 20 attempts per remote IP per five-minute server-process window, no queue.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestLoginRequest' }
+      responses:
+        '200':
+          description: Authenticated TEST account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResult' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403':
+          description: Invalid invite code
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '404': { description: TEST mode disabled }
+        '413': { description: Request body exceeds 4096 bytes }
+        '429': { $ref: '#/components/responses/Problem' }
+
+  /api/test/game:
+    get:
+      tags: [Test]
+      summary: Advance shared TEST rounds and read the game, previous results, and personal stats
+      description: >
+        Requires an authenticated, still-configured TEST invite. Resolves the expired active
+        round transactionally, recomputes real scores, and creates one new 120-second round at
+        the request time. Idle periods are not backfilled. Each round has one clearly labeled
+        sample Sports, Finance, and Pop Culture question. Results are randomly simulated only
+        after lock and never disclosed ahead of time. Times and submission locks are authoritative
+        on the server. Only the caller's picks/skips are returned.
+      responses:
+        '200':
+          description: Current TEST game
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Clients must not cache authenticated game snapshots.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestGameView' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: TEST mode disabled }
+
   /api/auth/otp:
     post:
       tags: [Auth]
@@ -58,6 +142,8 @@ paths:
       responses:
         '202': { description: OTP dispatched (always 202, even for unknown numbers) }
         '400': { $ref: '#/components/responses/Problem' }
+        '403': { description: Ordinary phone/social login is disabled in TEST mode }
+        '429': { $ref: '#/components/responses/Problem' }
 
   /api/auth/login:
     post:
@@ -76,12 +162,16 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AuthResult' }
         '400': { $ref: '#/components/responses/Problem' }
-        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
 
   /api/auth/refresh:
     post:
       tags: [Auth]
       summary: Exchange a valid refresh token for a fresh, rotated access/refresh pair
+      description: >
+        Applies to ordinary and TEST accounts, but tokens cannot cross modes. Removing an invite
+        ID from configuration denies its existing access and refresh tokens on the updated server.
+        Changing only its code hash affects future logins, not existing sessions.
       security: []
       requestBody:
         required: true
@@ -94,7 +184,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthResult' }
-        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
 
   /api/auth/devices:
     post:
@@ -125,7 +215,10 @@ paths:
   /api/guesses:
     post:
       tags: [Daily]
-      summary: Submit a pick or a skip (rejected after the 6-hour lock)
+      summary: Submit a pick or a skip (rejected at or after the server's locksAtUtc)
+      description: >
+        Production sets have a six-hour window; TEST rounds have a 120-second window.
+        Send either pick A/B with skip false, or pick null with skip true.
       requestBody:
         required: true
         content:
@@ -137,11 +230,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/GuessResult' }
-        '409':
+        '423':
           description: The set is locked
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
 
   /api/leaderboards:
@@ -467,6 +562,25 @@ components:
       properties:
         phoneE164: { type: string, example: '+15555550100' }
 
+    TestLoginRequest:
+      type: object
+      required: [inviteCode, displayName]
+      properties:
+        inviteCode:
+          type: string
+          minLength: 32
+          maxLength: 256
+          pattern: '^\S+$'
+          writeOnly: true
+          description: >
+            Strong random invite (at least 128 bits of randomness; recommend 32 random bytes
+            encoded as base64url). Compared exactly as UTF-8; no whitespace or trimming.
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: Trimmed before validation; must not be blank or contain control characters.
+
     LoginRequest:
       type: object
       required: [phoneE164, code, provider, idToken]
@@ -494,6 +608,7 @@ components:
 
     AuthResult:
       type: object
+      required: [accessToken, accessTokenExpiresAt, refreshToken, userId, displayName, isAdmin]
       properties:
         accessToken: { type: string }
         accessTokenExpiresAt: { type: string, format: date-time }
@@ -515,6 +630,7 @@ components:
 
     GuessResult:
       type: object
+      required: [questionId, categoryCode, pick, isSkip, submittedAt]
       properties:
         questionId: { type: string, format: uuid }
         categoryCode: { type: string }
@@ -526,6 +642,7 @@ components:
 
     DailySetQuestionView:
       type: object
+      required: [questionId, categoryCode, categoryName, text, sideALabel, sideBLabel, myPick, mySkip, outcome]
       properties:
         questionId: { type: string, format: uuid }
         categoryCode: { type: string, example: pop_culture }
@@ -541,6 +658,7 @@ components:
 
     DailySetView:
       type: object
+      required: [id, dropAtUtc, locksAtUtc, isOpen, questions]
       properties:
         id: { type: string, format: uuid }
         dropAtUtc: { type: string, format: date-time }
@@ -550,8 +668,47 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DailySetQuestionView' }
 
+    TestGameView:
+      type: object
+      required: [serverTimeUtc, currentRound, previousRound, stats]
+      properties:
+        serverTimeUtc: { type: string, format: date-time }
+        currentRound:
+          allOf: [{ $ref: '#/components/schemas/DailySetView' }]
+          description: Always present on success. Current outcomes remain Unresolved before lock.
+        previousRound:
+          allOf: [{ $ref: '#/components/schemas/DailySetView' }]
+          nullable: true
+          description: Most recently completed simulated round, or null before the first completion.
+        stats: { $ref: '#/components/schemas/TestPlayerStats' }
+
+    TestPlayerStats:
+      type: object
+      required: [totalScore, overallStreak, categories]
+      properties:
+        totalScore: { type: integer, format: int32, minimum: 0 }
+        overallStreak:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Sum of current per-category streaks.
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/TestCategoryStats' }
+
+    TestCategoryStats:
+      type: object
+      required: [categoryCode, categoryName, currentStreak, bestStreak, totalCorrect]
+      properties:
+        categoryCode: { type: string, enum: [sports, finance, pop_culture] }
+        categoryName: { type: string }
+        currentStreak: { type: integer, format: int32, minimum: 0 }
+        bestStreak: { type: integer, format: int32, minimum: 0 }
+        totalCorrect: { type: integer, format: int32, minimum: 0 }
+
     LeaderboardRow:
       type: object
+      required: [rank, userId, displayName, score, isMe]
       properties:
         rank: { type: integer, format: int64 }
         userId: { type: string, format: uuid }
@@ -561,6 +718,7 @@ components:
 
     LeaderboardResult:
       type: object
+      required: [type, scope, categoryCode, rows]
       properties:
         type: { $ref: '#/components/schemas/BoardType' }
         scope: { $ref: '#/components/schemas/BoardScope' }

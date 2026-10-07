@@ -1,7 +1,9 @@
+using CalledIt.Application.Abstractions;
 using CalledIt.Application.Common;
 using CalledIt.Domain;
 using CalledIt.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 
 namespace CalledIt.Infrastructure.Persistence;
@@ -15,27 +17,59 @@ public sealed class DbInitializer
 {
     private readonly AppDbContext _db;
     private readonly GameOptions _game;
+    private readonly bool _applyMigrations;
+    private readonly TestModeOptions _testMode;
+    private readonly ITestModeTransaction _testTransaction;
 
-    public DbInitializer(AppDbContext db, IOptions<GameOptions> game)
+    public DbInitializer(
+        AppDbContext db, IOptions<GameOptions> game, IConfiguration configuration,
+        IOptions<TestModeOptions> testMode, ITestModeTransaction testTransaction)
     {
         _db = db;
         _game = game.Value;
+        _applyMigrations = configuration.GetValue("Database:ApplyMigrationsOnStartup", true);
+        _testMode = testMode.Value;
+        _testTransaction = testTransaction;
     }
 
     public async Task InitializeAsync(CancellationToken ct = default)
     {
-        if (_db.Database.IsSqlite())
+        if (_applyMigrations && _db.Database.IsSqlite())
         {
             await _db.Database.EnsureCreatedAsync(ct);
         }
-        else
+        else if (_applyMigrations)
         {
             await _db.Database.MigrateAsync(ct);
         }
+        else if (!_db.Database.IsSqlite() && (await _db.Database.GetPendingMigrationsAsync(ct)).Any())
+        {
+            throw new InvalidOperationException(
+                "Database migrations are pending. Apply them before starting the API.");
+        }
 
+        if (_testMode.Enabled)
+        {
+            await _testTransaction.ExecuteAsync(async () =>
+            {
+                await SeedAsync(ct);
+                return true;
+            }, ct);
+        }
+        else
+        {
+            await SeedAsync(ct);
+        }
+    }
+
+    private async Task SeedAsync(CancellationToken ct)
+    {
         await SeedCategoriesAsync(ct);
         await SeedResolutionSourcesAsync(ct);
-        await SeedAdminsAsync(ct);
+        if (!_testMode.Enabled)
+        {
+            await SeedAdminsAsync(ct);
+        }
     }
 
     private async Task SeedCategoriesAsync(CancellationToken ct)
@@ -76,7 +110,7 @@ public sealed class DbInitializer
     {
         foreach (var phone in _game.AdminBootstrapPhones)
         {
-            var user = await _db.Users.FirstOrDefaultAsync(u => u.PhoneE164 == phone, ct);
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.TestInviteId == null && u.PhoneE164 == phone, ct);
             if (user is not null && !user.IsAdmin)
             {
                 user.IsAdmin = true;

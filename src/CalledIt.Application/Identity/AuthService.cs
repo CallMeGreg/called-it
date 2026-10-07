@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using CalledIt.Application.Abstractions;
 using CalledIt.Application.Common;
 using CalledIt.Domain.Entities;
@@ -21,6 +22,8 @@ public sealed class AuthService
     private readonly IPhoneHasher _phoneHasher;
     private readonly AuthOptions _auth;
     private readonly GameOptions _game;
+    private readonly TestModeOptions _testMode;
+    private readonly ITestModeTransaction _testTransaction;
 
     public AuthService(
         IAppDbContext db,
@@ -30,7 +33,9 @@ public sealed class AuthService
         ITokenService tokens,
         IPhoneHasher phoneHasher,
         IOptions<AuthOptions> auth,
-        IOptions<GameOptions> game)
+        IOptions<GameOptions> game,
+        IOptions<TestModeOptions> testMode,
+        ITestModeTransaction testTransaction)
     {
         _db = db;
         _clock = clock;
@@ -40,11 +45,14 @@ public sealed class AuthService
         _phoneHasher = phoneHasher;
         _auth = auth.Value;
         _game = game.Value;
+        _testMode = testMode.Value;
+        _testTransaction = testTransaction;
     }
 
     /// <summary>Generate + send a one-time passcode for the given phone number.</summary>
     public async Task RequestOtpAsync(RequestOtpCommand cmd, CancellationToken ct = default)
     {
+        RequireOrdinaryLogin();
         var phone = NormalizePhone(cmd.PhoneE164);
 
         await EnforceOtpSendLimitsAsync(phone, ct);
@@ -102,6 +110,7 @@ public sealed class AuthService
 
     public async Task<AuthResult> RegisterOrLoginAsync(RegisterOrLoginCommand cmd, CancellationToken ct = default)
     {
+        RequireOrdinaryLogin();
         var phone = NormalizePhone(cmd.PhoneE164);
 
         await VerifyOtpAsync(phone, cmd.Code, ct);
@@ -120,8 +129,74 @@ public sealed class AuthService
         return await IssueAsync(user, ct);
     }
 
-    public async Task<AuthResult> RefreshAsync(string refreshTokenValue, CancellationToken ct = default)
+    public Task<AuthResult> LoginWithInviteAsync(
+        string inviteCode, string displayName, CancellationToken ct = default)
     {
+        _testMode.RequireEnabled();
+        if (string.IsNullOrEmpty(inviteCode) || inviteCode.Length is < 32 or > 256
+            || inviteCode.Any(char.IsWhiteSpace))
+        {
+            throw new ValidationException("Invite codes must contain 32-256 characters without whitespace.");
+        }
+
+        var name = displayName?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Length > 60 || name.Any(char.IsControl))
+        {
+            throw new ValidationException("Display name must contain 1-60 characters without control characters.");
+        }
+
+        var candidate = SHA256.HashData(Encoding.UTF8.GetBytes(inviteCode));
+        string? inviteId = null;
+        foreach (var invite in _testMode.Invites)
+        {
+            if (CryptographicOperations.FixedTimeEquals(candidate, invite.CodeHash.Span))
+            {
+                inviteId = invite.Id;
+            }
+        }
+
+        if (inviteId is null)
+        {
+            throw new ForbiddenException("Invalid invite code.");
+        }
+
+        return _testTransaction.ExecuteAsync(async () =>
+        {
+            var user = await _db.Users.SingleOrDefaultAsync(u => u.TestInviteId == inviteId, ct);
+            if (user is null)
+            {
+                user = new User
+                {
+                    TestInviteId = inviteId,
+                    DisplayName = name,
+                    IsAdmin = false,
+                    DiscoverableByPhone = false,
+                    CreatedAt = _clock.UtcNow,
+                };
+                _db.Users.Add(user);
+            }
+            else
+            {
+                RequireMatchingMode(user);
+                user.DisplayName = name;
+            }
+
+            return await IssueAsync(user, ct);
+        }, ct);
+    }
+
+    public Task<AuthResult> RefreshAsync(string refreshTokenValue, CancellationToken ct = default) =>
+        _testMode.Enabled
+            ? _testTransaction.ExecuteAsync(() => RefreshCoreAsync(refreshTokenValue, ct), ct)
+            : RefreshCoreAsync(refreshTokenValue, ct);
+
+    private async Task<AuthResult> RefreshCoreAsync(string refreshTokenValue, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(refreshTokenValue) || refreshTokenValue.Length > 512)
+        {
+            throw new ForbiddenException("Invalid or expired refresh token.");
+        }
+
         var hash = _tokens.HashRefreshToken(refreshTokenValue);
         var existing = await _db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
 
@@ -132,6 +207,7 @@ public sealed class AuthService
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == existing.UserId, ct)
             ?? throw new NotFoundException("User not found.");
+        RequireMatchingMode(user);
 
         // Rotate: revoke the old token, issue a fresh pair.
         existing.Revoked = true;
@@ -197,7 +273,7 @@ public sealed class AuthService
     {
         var phoneHash = _phoneHasher.Hash(phone);
 
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.PhoneE164 == phone, ct);
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.TestInviteId == null && u.PhoneE164 == phone, ct);
         if (user is null)
         {
             user = new User
@@ -235,6 +311,7 @@ public sealed class AuthService
 
     private async Task<AuthResult> IssueAsync(User user, CancellationToken ct, RefreshToken? replacedFrom = null)
     {
+        RequireMatchingMode(user);
         var access = _tokens.CreateAccessToken(user);
         var refreshValue = _tokens.GenerateRefreshTokenValue();
 
@@ -256,6 +333,25 @@ public sealed class AuthService
 
         return new AuthResult(
             access.Token, access.ExpiresAt, refreshValue, user.Id, user.DisplayName, user.IsAdmin);
+    }
+
+    private void RequireOrdinaryLogin()
+    {
+        if (_testMode.Enabled)
+        {
+            throw new ForbiddenException("Phone and social login are disabled in TEST mode. Use an invite.");
+        }
+    }
+
+    private void RequireMatchingMode(User user)
+    {
+        if (_testMode.Enabled != (user.TestInviteId is not null)
+            || (user.TestInviteId is not null
+                && (user.IsAdmin || user.DiscoverableByPhone || user.PhoneE164 is not null || user.PhoneHash is not null
+                    || !_testMode.Invites.Any(i => i.Id == user.TestInviteId))))
+        {
+            throw new ForbiddenException("This account is not available in the current mode.");
+        }
     }
 
     private static string NormalizePhone(string raw)

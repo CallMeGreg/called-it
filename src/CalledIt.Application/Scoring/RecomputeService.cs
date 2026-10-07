@@ -15,13 +15,13 @@ public sealed class RecomputeService
 {
     private readonly IAppDbContext _db;
     private readonly IClock _clock;
-    private readonly ILeaderboardStore _boards;
+    private readonly IReadOnlyList<ILeaderboardStore> _boards;
 
-    public RecomputeService(IAppDbContext db, IClock clock, ILeaderboardStore boards)
+    public RecomputeService(IAppDbContext db, IClock clock, IEnumerable<ILeaderboardStore> boards)
     {
         _db = db;
         _clock = clock;
-        _boards = boards;
+        _boards = boards.ToArray();
     }
 
     /// <summary>Recompute every player who was eligible for the given set (incl. non-participants,
@@ -35,7 +35,9 @@ public sealed class RecomputeService
         }
 
         var eligibleUserIds = await _db.Users
-            .Where(u => u.CreatedAt <= set.DropAtUtc)
+            .Where(u => (u.TestInviteId != null) == set.IsTest
+                && (u.CreatedAt <= set.DropAtUtc
+                    || (set.IsTest && _db.Guesses.Any(g => g.UserId == u.Id && g.DailySetId == set.Id))))
             .Select(u => u.Id)
             .ToListAsync(ct);
 
@@ -54,10 +56,13 @@ public sealed class RecomputeService
         }
 
         var now = _clock.UtcNow;
+        var isTest = user.TestInviteId is not null;
 
         var sets = await _db.DailySets
             .Include(s => s.Items).ThenInclude(i => i.Question)
-            .Where(s => s.DropAtUtc <= now && s.DropAtUtc >= user.CreatedAt)
+            .Where(s => s.IsTest == isTest && s.DropAtUtc <= now
+                && (s.DropAtUtc >= user.CreatedAt
+                    || (isTest && _db.Guesses.Any(g => g.UserId == userId && g.DailySetId == s.Id))))
             .OrderBy(s => s.DropAtUtc)
             .ToListAsync(ct);
 
@@ -79,7 +84,7 @@ public sealed class RecomputeService
         var states = StreakCalculator.Replay(history);
 
         await PersistAsync(userId, states, ct);
-        await UpdateBoardsAsync(userId, states, ct);
+        await UpdateBoardsAsync(userId, states, isTest, ct);
     }
 
     private async Task PersistAsync(Guid userId, IReadOnlyDictionary<string, CategoryState> states, CancellationToken ct)
@@ -114,17 +119,26 @@ public sealed class RecomputeService
         await _db.SaveChangesAsync(ct);
     }
 
-    private async Task UpdateBoardsAsync(Guid userId, IReadOnlyDictionary<string, CategoryState> states, CancellationToken ct)
+    private async Task UpdateBoardsAsync(
+        Guid userId, IReadOnlyDictionary<string, CategoryState> states, bool isTest, CancellationToken ct)
     {
         var member = userId.ToString();
 
-        foreach (var (code, state) in states)
+        // Database readers use the Score/Streak rows just persisted. Only cache stores need a projection.
+        foreach (var board in _boards)
         {
-            await _boards.SetScoreAsync(LeaderboardKeys.CategoryStreak(code), member, state.Current, ct);
-            await _boards.SetScoreAsync(LeaderboardKeys.CategoryBestStreak(code), member, state.Best, ct);
-        }
+            foreach (var (code, state) in states)
+            {
+                await board.SetScoreAsync(
+                    LeaderboardKeys.InMode(LeaderboardKeys.CategoryStreak(code), isTest), member, state.Current, ct);
+                await board.SetScoreAsync(
+                    LeaderboardKeys.InMode(LeaderboardKeys.CategoryBestStreak(code), isTest), member, state.Best, ct);
+            }
 
-        await _boards.SetScoreAsync(LeaderboardKeys.OverallStreak, member, StreakCalculator.OverallCurrentStreak(states), ct);
-        await _boards.SetScoreAsync(LeaderboardKeys.TotalScore, member, StreakCalculator.TotalScore(states), ct);
+            await board.SetScoreAsync(LeaderboardKeys.InMode(LeaderboardKeys.OverallStreak, isTest),
+                member, StreakCalculator.OverallCurrentStreak(states), ct);
+            await board.SetScoreAsync(LeaderboardKeys.InMode(LeaderboardKeys.TotalScore, isTest),
+                member, StreakCalculator.TotalScore(states), ct);
+        }
     }
 }

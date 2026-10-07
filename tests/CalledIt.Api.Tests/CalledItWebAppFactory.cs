@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using CalledIt.Application.Abstractions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -42,24 +43,49 @@ public sealed class CalledItWebAppFactory : WebApplicationFactory<Program>
 {
     public RecordingSmsSender Sms { get; } = new();
 
-    private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"calledit-api-{Guid.NewGuid():N}.db");
+    private readonly string _dbPath;
+    private readonly bool _ownsDatabase;
     private readonly Dictionary<string, string?> _env;
+    private readonly IClock? _clock;
+    private readonly string? _webRoot;
 
-    public CalledItWebAppFactory()
+    public CalledItWebAppFactory(
+        IDictionary<string, string?>? settings = null, string environment = "Development",
+        string? databasePath = null, IClock? clock = null, string? webRoot = null)
     {
-        _env = new Dictionary<string, string?>
+        _dbPath = databasePath ?? Path.Combine(Path.GetTempPath(), $"calledit-api-{Guid.NewGuid():N}.db");
+        _ownsDatabase = databasePath is null;
+        _clock = clock;
+        _webRoot = webRoot;
+        var values = new Dictionary<string, string?>
         {
-            ["ASPNETCORE_ENVIRONMENT"] = "Development",
+            ["ASPNETCORE_ENVIRONMENT"] = environment,
+            ["DOTNET_ENVIRONMENT"] = environment,
             ["Database__Provider"] = "Sqlite",
+            ["Database__ApplyMigrationsOnStartup"] = "true",
             ["ConnectionStrings__Database"] = $"Data Source={_dbPath}",
             ["ConnectionStrings__Redis"] = "",
+            ["Leaderboards__Provider"] = "InMemory",
             ["Auth__SigningKey"] = "api-tests-signing-key-0123456789-abcdefghij",
             ["SocialAuth__UseFake"] = "true",
             ["Contacts__Pepper"] = "api-tests-pepper",
             ["Game__AdminBootstrapPhones__0"] = "+15555550100",
+            ["TestMode__Enabled"] = "false",
+            ["TestMode__RoundSeconds"] = "120",
+            ["TestMode__InvitesJson"] = "[]",
+            ["Logging__LogLevel__Default"] = "Warning",
         };
 
-        foreach (var (key, value) in _env)
+        if (settings is not null)
+        {
+            foreach (var (key, value) in settings)
+            {
+                values[key] = value;
+            }
+        }
+
+        _env = values.Keys.ToDictionary(k => k, Environment.GetEnvironmentVariable);
+        foreach (var (key, value) in values)
         {
             Environment.SetEnvironmentVariable(key, value);
         }
@@ -67,10 +93,26 @@ public sealed class CalledItWebAppFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        if (_webRoot is not null)
+        {
+            builder.UseWebRoot(_webRoot);
+        }
+
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<ISmsSender>();
             services.AddSingleton<ISmsSender>(Sms);
+            if (_clock is not null)
+            {
+                services.RemoveAll<IClock>();
+                services.AddSingleton(_clock);
+                services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
+                {
+                    options.TokenValidationParameters.LifetimeValidator = (notBefore, expires, _, _) =>
+                        (notBefore is null || notBefore <= _clock.UtcNow.UtcDateTime)
+                        && expires > _clock.UtcNow.UtcDateTime;
+                });
+            }
         });
     }
 
@@ -78,14 +120,17 @@ public sealed class CalledItWebAppFactory : WebApplicationFactory<Program>
     {
         base.Dispose(disposing);
 
-        foreach (var key in _env.Keys)
+        foreach (var (key, value) in _env)
         {
-            Environment.SetEnvironmentVariable(key, null);
+            Environment.SetEnvironmentVariable(key, value);
         }
 
-        foreach (var suffix in new[] { "", "-shm", "-wal" })
+        if (_ownsDatabase)
         {
-            try { File.Delete(_dbPath + suffix); } catch { /* best effort */ }
+            foreach (var suffix in new[] { "", "-shm", "-wal" })
+            {
+                File.Delete(_dbPath + suffix);
+            }
         }
     }
 }
