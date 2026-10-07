@@ -1,9 +1,9 @@
 {
   "stateVersion": 2,
-  "controllerVersion": "2.3.0.0",
+  "controllerVersion": "2.3.1.0",
   "signedStackOperation": {
     "apiVersion": "2024-03-01",
-    "paths": ["deploymentStackOperationStatuses", "deploymentStackOperationResults"],
+    "paths": ["deploymentStackOperationStatus", "deploymentStackOperationStatuses", "deploymentStackOperationResults"],
     "queryParameters": ["t", "c", "s", "h"],
     "maxUrlLength": 16384
   },

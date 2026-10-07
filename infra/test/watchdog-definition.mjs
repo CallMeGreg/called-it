@@ -197,7 +197,7 @@ function reconciliation() {
     not(contains(${url},decodeUriComponent('%09'))),not(contains(${url},decodeUriComponent('%0A'))),
     not(contains(${url},decodeUriComponent('%0D')))
   )`;
-  const urlRootOperation = ['operations', 'operationStatuses', 'operationResults', 'deploymentStackOperationStatuses', 'deploymentStackOperationResults']
+  const urlRootOperation = ['operations', 'operationStatuses', 'operationResults', ...receipt.paths]
     .map((kind) => `startsWith(${lowerUrl},concat(${providerRoot},'${kind.toLowerCase()}/'))`).join(',');
   const validUrl = `and(
     ${validLocations},

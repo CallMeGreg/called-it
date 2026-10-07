@@ -433,9 +433,13 @@ or reordered parameters fail closed. The opaque receipt is preserved unchanged f
 authenticated polling; it is not reduced to a fabricated unsigned URL. This does
 not broaden the allowed subscription, provider, resource, or region.
 
-The signed-receipt-aware controller definition is **2.3.0.0**; durable blob state remains
+The native create/update async header uses the singular
+`deploymentStackOperationStatus` endpoint; it is included explicitly in the shared
+CLI/watchdog allowlist, alongside the plural status and result forms.
+
+The signed-receipt-aware controller definition is **2.3.1.0**; durable blob state remains
 **schema v2**. Redeploy the matching foundation/controller before Start/Extend.
-Both region parameters and the controller version are checked, so the older 2.2.0.0
+Both region parameters and the controller version are checked, so the older 2.3.0.0
 definition is not accepted for a new launch. Existing schema-v2 state is preserved;
 schema-v1 blobs/writers are still rejected, not silently upgraded, because they may
 have unrecorded in-flight requests.
@@ -570,6 +574,7 @@ References: [Azure retail prices](https://prices.azure.com/api/retail/prices),
 [deployment stacks](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deployment-stacks),
 [RG stack request contract](https://learn.microsoft.com/rest/api/resources/deployment-stacks/create-or-update-at-resource-group?view=rest-resources-2024-03-01),
 [RG stack preflight validation](https://learn.microsoft.com/rest/api/resources/deployment-stacks/validate-stack-at-resource-group?view=rest-resources-2024-03-01),
+[Azure CLI native RG-stack response recording](https://github.com/Azure/azure-cli/blob/dev/src/azure-cli/azure/cli/command_modules/resource/tests/latest/recordings/test_create_deployment_stack_resource_group.yaml),
 [Activity Logs List/filter contract](https://learn.microsoft.com/rest/api/monitor/activity-logs/list?view=rest-monitor-2015-04-01),
 [ARM asynchronous operations and permissions](https://learn.microsoft.com/azure/azure-resource-manager/management/async-operations),
 [blob leases](https://learn.microsoft.com/rest/api/storageservices/lease-blob),

@@ -24,12 +24,12 @@ export function operationUrl(value, provider, resourceId) {
   const providerRoot = `${subscription}/providers/${provider.toLowerCase()}/`;
   const regional = `${providerRoot}locations/${region}/`;
   const scoped = `${resourceId.toLowerCase()}/`;
-  const rootOperation = ['operations', 'operationStatuses', 'operationResults', 'deploymentStackOperationStatuses', 'deploymentStackOperationResults']
+  const receipt = PROTOCOL.signedStackOperation;
+  const rootOperation = ['operations', 'operationStatuses', 'operationResults', ...receipt.paths]
     .some((kind) => path.startsWith(`${providerRoot}${kind.toLowerCase()}/`));
   const deploymentOperation = provider === 'Microsoft.Resources'
     && path.startsWith(`${GROUP_ID.toLowerCase()}/providers/microsoft.resources/deployments/`)
     && /\/operation(?:statuses|results|s)\//.test(path);
-  const receipt = PROTOCOL.signedStackOperation;
   const signedEndpoint = provider === 'Microsoft.Resources' && receipt.paths.some((kind) => {
     const prefix = `${regional}${kind.toLowerCase()}/`;
     return path.startsWith(prefix) && path.length > prefix.length && !path.slice(prefix.length).includes('/');

@@ -657,9 +657,9 @@ test('terminal failed/canceled LRO receipts settle exact submissions and permit 
     const { azure, lifecycle, requests } = fakeLifecycle();
     azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
     const send = azure.arm;
-    const url = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationStatuses/1234?api-version=2024-03-01&t=639269869167784920&c=certificate_fixture&s=signature_fixture&h=hash_fixture`;
+    const url = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationStatus/1234?api-version=2024-03-01&t=639269869167784920&c=certificate_fixture&s=signature_fixture&h=hash_fixture`;
     azure.arm = async (path, options = {}) => {
-      if (path.includes('/deploymentStackOperationStatuses/')) return { status: 200, body: { status: result } };
+      if (path.includes('/deploymentStackOperationStatus/')) return { status: 200, body: { status: result } };
       const response = await send(path, options);
       if (options.method === 'PUT') response.headers = new Headers({ 'Azure-AsyncOperation': url });
       return response;
