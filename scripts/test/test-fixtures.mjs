@@ -1,10 +1,39 @@
-import { CONFIG, DATA_GROUP_ID } from './config.mjs';
+import { CONFIG, DATA_GROUP_ID, GROUP_ID } from './config.mjs';
 import { AzureError } from './azure.mjs';
 import { idleState } from './state.mjs';
 
 export const TEST_NOW = new Date('2026-01-01T12:00:00.000Z');
 export const RUN_ID = '1234567890abcdef1234567890abcdef';
 export const GUID = '12345678-1234-1234-1234-123456789abc';
+export const EVENT_ID = '87654321-4321-4321-4321-cba987654321';
+export const RUN_GROUP = {
+  id: GROUP_ID, location: CONFIG.location,
+  tags: { application: 'called-it', environment: 'test', lifecycle: 'disposable' },
+};
+
+export function rejectedStackResponse(stackId) {
+  return { status: 400, headers: new Headers(), body: { error: {
+    code: 'InvalidDeployment',
+    message: `The 'location' property is not allowed for '${stackId.split('/').at(-1)}' at resource group scope.`,
+  } } };
+}
+
+export function rejectionEvent(state) {
+  const submission = state.submissions.at(-1);
+  return {
+    eventDataId: EVENT_ID, correlationId: GUID, eventTimestamp: submission.submittedAt,
+    subscriptionId: CONFIG.subscriptionId, resourceGroupName: CONFIG.runGroup,
+    resourceProviderName: { value: 'Microsoft.Resources' }, resourceId: state.stackId,
+    eventName: { value: 'EndRequest', localizedValue: 'End request' },
+    operationName: { value: 'Microsoft.Resources/deploymentStacks/write' },
+    status: { value: 'Failed' }, subStatus: { value: 'BadRequest' },
+    httpRequest: { method: 'PUT', clientRequestId: submission.clientRequestId,
+      uri: `https://management.azure.com${state.stackId}?api-version=2024-03-01` },
+    properties: { entity: state.stackId, statusCode: 'BadRequest',
+      statusMessage: JSON.stringify(rejectedStackResponse(state.stackId).body) },
+  };
+}
+
 export const FOUNDATION = {
   ...CONFIG,
   runtimeIdentityId: `${DATA_GROUP_ID}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/called-it-test-runtime`,

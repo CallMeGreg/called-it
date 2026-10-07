@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Lifecycle, assertOwnedStack, main, UnresolvedSubmissionError } from './lifecycle.mjs';
+import { Lifecycle, assertOwnedStack, assertOwnedRunGroup, main, UnresolvedSubmissionError } from './lifecycle.mjs';
 import { CONFIG, GROUP_ID, MANAGED_GROUP_ID, DATA_GROUP_ID } from './config.mjs';
-import { idleState, startState, pendingSubmission } from './state.mjs';
-import { FOUNDATION, RUN_ID, TEST_NOW, MemoryAzure } from './test-fixtures.mjs';
+import { idleState, startState, beginSubmission, pendingSubmission } from './state.mjs';
+import { FOUNDATION, RUN_ID, RUN_GROUP, TEST_NOW, MemoryAzure, EVENT_ID, rejectionEvent, rejectedStackResponse } from './test-fixtures.mjs';
 import { AzureError } from './azure.mjs';
 import { PROTOCOL } from './operations.mjs';
 
@@ -14,7 +14,7 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
   let managed = false;
   let generation = 0;
   const deployments = new Map();
-  azure.guard = async () => {};
+  azure.guard = async () => ({ user: { type: 'user' } });
   azure.compile = async (path) => {
     assert.equal(path, 'infra/test/run.bicep');
     return { resources: [] };
@@ -48,6 +48,7 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
         }).map(([key, value]) => [key, { value }])),
       } } };
     }
+    if (path.startsWith(`${GROUP_ID}?`)) return { status: 200, body: structuredClone(RUN_GROUP) };
     if (path.startsWith(`${GROUP_ID}/resources?`)) return { status: 200, body: { value: stack?.properties.resources ?? [] } };
     if (path.startsWith(`${MANAGED_GROUP_ID}?`)) return { status: managed ? 200 : 404 };
     if (path.startsWith(`${FOUNDATION.sqlServerId}?`)) {
@@ -61,6 +62,11 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
       return { status: 200, body: { properties: { secretUriWithVersion: `${FOUNDATION.vaultUri}secrets/${name}/${'a'.repeat(32)}` } } };
     }
     if (path.includes('/Microsoft.Resources/deploymentStacks/')) {
+      if (path.includes('/validate?') && options.method === 'POST') {
+        assert.equal(pendingSubmission(azure.state), null, 'Preflight must precede durable PUT intent.');
+        assert.equal(Object.hasOwn(options.body, 'location'), false);
+        return { status: 200, body: { properties: { deploymentScope: GROUP_ID, validatedResources: [] } } };
+      }
       if (options.method === 'PUT') {
         generation++;
         const run = options.body.properties.parameters.runId.value;
@@ -74,7 +80,7 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
           },
         });
         stack = {
-          id: path.split('?')[0], location: options.body.location, tags: options.body.tags,
+          id: path.split('?')[0], tags: options.body.tags,
           properties: {
             ...options.body.properties, provisioningState: 'succeeded', deploymentId,
             correlationId: `10000000-0000-0000-0000-${String(generation).padStart(12, '0')}`,
@@ -111,10 +117,27 @@ function fakeLifecycle({ migrationStatus = 'Succeeded', managedLeftover = false 
   return { azure, lifecycle, requests, deployments, stack: () => stack };
 }
 
+function rejectionRecovery() {
+  const fixture = fakeLifecycle();
+  fixture.azure.state = { ...beginSubmission(startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID }), {}, TEST_NOW), phase: 'Stopping' };
+  const event = rejectionEvent(fixture.azure.state);
+  const send = fixture.azure.arm;
+  fixture.azure.arm = async (path, options) => {
+    if (path.includes('/Microsoft.Insights/eventtypes/management/values?')) {
+      fixture.requests.push({ path, ...options });
+      return { status: 200, body: { value: [structuredClone(event)] } };
+    }
+    return send(path, options);
+  };
+  return { ...fixture, event, submissionId: pendingSubmission(fixture.azure.state).id };
+}
+
 test('extra actions or unrelated options are rejected before any Azure context is used', async () => {
   await assert.rejects(main(['start', 'another-environment']), /exactly one/);
   await assert.rejects(main(['start', '--run-id', RUN_ID]), /Unexpected options/);
   await assert.rejects(main(['status', '--register-providers']), /Unexpected options/);
+  await assert.rejects(main(['reconcile-rejection', '--run-id', RUN_ID]), /explicit UUID/);
+  await assert.rejects(main(['reconcile-rejection', '--file', 'event.json']), /Unexpected options/);
 });
 
 test('Start provisions network, builds digests, migrates privately, then publishes API; Stop retains data', async (context) => {
@@ -123,9 +146,16 @@ test('Start provisions network, builds digests, migrates privately, then publish
   const running = await lifecycle.start();
   assert.equal(running.phase, 'Running');
   const stages = requests.filter(({ method }) => method === 'PUT');
+  const validations = requests.filter(({ path }) => path?.includes('/validate?'));
   assert.equal(stages.length, 3);
-  for (const stage of stages) {
-    assert.equal(stage.body.location, 'eastus2');
+  assert.equal(validations.length, 3);
+  for (const [index, stage] of stages.entries()) {
+    assert.deepEqual(validations[index].body, stage.body);
+    assert.equal(validations[index].path, stage.path.replace('?', '/validate?'));
+    assert.deepEqual(Object.keys(stage.body).sort(), ['properties', 'tags']);
+    assert.equal(stage.body.properties.deploymentScope, GROUP_ID);
+    assert.deepEqual(stage.body.properties.actionOnUnmanage, { resources: 'delete', resourceGroups: 'detach', managementGroups: 'detach' });
+    assert.deepEqual(stage.body.properties.denySettings, { mode: 'none' });
     assert.equal(stage.body.properties.parameters.location.value, 'centralus');
     assert.equal(stage.body.properties.parameters.foundation.value.location, 'eastus2');
     assert.equal(stage.body.properties.parameters.foundation.value.workloadLocation, 'centralus');
@@ -157,7 +187,7 @@ test('failed migration never publishes an app and invokes guarded cleanup', asyn
 });
 
 test('Start and Extend require the split-region controller protocol, not an older watchdog', async () => {
-  for (const version of [undefined, '1.0.0.0', '2.0.0.0']) {
+  for (const version of [undefined, '1.0.0.0', '2.0.0.0', '2.1.0.0']) {
     const { lifecycle, azure, requests } = fakeLifecycle();
     const send = azure.arm;
     azure.arm = async (path, options) => {
@@ -226,15 +256,280 @@ test('Stop needs exact run confirmation and cannot target a new run', async (con
 test('ownership inventory rejects persistent resources, unknown scope, deny settings and missing inventory', () => {
   const state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
   const stack = {
-    id: state.stackId, location: CONFIG.location, tags: { application: 'called-it', environment: 'test', runId: RUN_ID },
+    id: state.stackId, tags: { application: 'called-it', environment: 'test', runId: RUN_ID },
     properties: { deploymentScope: GROUP_ID, denySettings: { mode: 'none' }, resources: [] },
   };
   assert.doesNotThrow(() => assertOwnedStack(stack, state));
-  assert.throws(() => assertOwnedStack({ ...stack, location: CONFIG.workloadLocation }, state), /metadata region/);
+  for (const deploymentScope of [undefined, null]) {
+    assert.doesNotThrow(() => assertOwnedStack({ ...stack, properties: { ...stack.properties, deploymentScope } }, state));
+  }
+  assert.doesNotThrow(() => assertOwnedRunGroup(RUN_GROUP));
+  assert.throws(() => assertOwnedRunGroup({ ...RUN_GROUP, location: CONFIG.workloadLocation }), /metadata region/);
+  assert.throws(() => assertOwnedRunGroup({ ...RUN_GROUP, id: DATA_GROUP_ID }), /ownership/);
+  assert.throws(() => assertOwnedRunGroup({ ...RUN_GROUP, tags: {} }), /ownership/);
   for (const properties of [
     { resources: [{ id: FOUNDATION.sqlServerId }] },
-    { deploymentScope: DATA_GROUP_ID }, { denySettings: { mode: 'denyDelete' } }, { resources: undefined },
+    { deploymentScope: DATA_GROUP_ID }, { deploymentScope: '' }, { denySettings: { mode: 'denyDelete' } }, { resources: undefined },
   ]) assert.throws(() => assertOwnedStack({ ...stack, properties: { ...stack.properties, ...properties } }, state));
+});
+
+test('native bodyless 202 validation is polled before intent, using the exact RG-scoped request', async () => {
+  const { azure, lifecycle, requests } = fakeLifecycle();
+  azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+  const send = azure.arm;
+  const operation = `/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationResults/validation?api-version=2024-03-01`;
+  let polls = 0;
+  azure.arm = async (path, options = {}) => {
+    if (path.includes('/validate?')) {
+      assert.equal(azure.state.submissions.length, 0);
+      assert.equal(Object.hasOwn(options.body, 'location'), false);
+      return { status: 202, headers: new Headers({ Location: `https://management.azure.com${operation}`, 'Retry-After': '1' }), body: null };
+    }
+    if (path === operation) {
+      polls++;
+      assert.equal(azure.state.submissions.length, 0);
+      return { status: 200, body: { error: null, properties: { deploymentScope: null, validatedResources: [] } } };
+    }
+    return send(path, options);
+  };
+  await lifecycle.applyRun(RUN_ID);
+  assert.equal(polls, 1);
+  assert.equal(requests.filter(({ method }) => method === 'PUT').length, 1);
+});
+
+test('validation checks the final result after an async status, never just a successful-looking operation', async () => {
+  for (const failure of [false, true]) {
+    const { azure, lifecycle, requests } = fakeLifecycle();
+    azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+    const send = azure.arm;
+    const root = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2`;
+    const statusUrl = `${root}/operationStatuses/validation?api-version=2024-03-01`;
+    const resultUrl = `${root}/operationResults/validation?api-version=2024-03-01`;
+    const polls = [];
+    azure.arm = async (path, options = {}) => {
+      if (path.includes('/validate?')) return {
+        status: 202, body: null, headers: new Headers({ 'Azure-AsyncOperation': statusUrl, Location: resultUrl }),
+      };
+      if (`https://management.azure.com${path}` === statusUrl) {
+        polls.push('status');
+        return { status: 200, body: { status: 'Succeeded' } };
+      }
+      if (`https://management.azure.com${path}` === resultUrl) {
+        polls.push('result');
+        return failure ? { status: 400, body: { error: { code: 'InvalidTemplate' } } }
+          : { status: 200, body: { properties: { validatedResources: [] } } };
+      }
+      return send(path, options);
+    };
+    if (failure) {
+      await assert.rejects(lifecycle.applyRun(RUN_ID), /preflight validation failed/);
+      assert.equal(azure.state.submissions.length, 0);
+      assert.equal(requests.some(({ method }) => method === 'PUT'), false);
+    } else await lifecycle.applyRun(RUN_ID);
+    assert.deepEqual(polls, ['status', 'result']);
+  }
+});
+
+test('failed, timed-out or unsafe stack preflight never persists a PUT intent or creates a stack', async () => {
+  for (const invalid of [
+    rejectedStackResponse('test-stack'),
+    { status: 200, body: { error: { code: 'InvalidTemplate' } } },
+    { status: 200, body: { status: 'Failed' } },
+    { status: 200, body: { status: 'Succeeded' } },
+    { status: 200, body: { properties: { provisioningState: 'succeeded', resources: [] } } },
+    { status: 202, headers: new Headers(), body: null },
+    { status: 202, headers: new Headers({ Location: 'https://example.com/operation?api-version=2024-03-01' }) },
+    new AzureError('validation', 'TimeoutError'),
+  ]) {
+    const { azure, lifecycle, requests } = fakeLifecycle();
+    azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+    const send = azure.arm;
+    azure.arm = async (path, options) => {
+      if (path.includes('/validate?')) {
+        if (invalid instanceof Error) throw invalid;
+        return invalid;
+      }
+      return send(path, options);
+    };
+    await assert.rejects(lifecycle.applyRun(RUN_ID));
+    assert.equal(azure.state.submissions.length, 0);
+    assert.equal(requests.some(({ method }) => method === 'PUT'), false);
+  }
+});
+
+test('preflight delays do not age the PUT timestamp, and expiry during validation prevents submission', async () => {
+  for (const expire of [false, true]) {
+    const { azure, lifecycle, requests } = fakeLifecycle();
+    azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+    let now = TEST_NOW;
+    lifecycle.now = () => now;
+    const send = azure.arm;
+    azure.arm = async (path, options) => {
+      const result = await send(path, options);
+      if (path.includes('/validate?')) now = new Date(TEST_NOW.getTime() + (expire ? 4 * 3_600_000 : 2_000));
+      return result;
+    };
+    if (expire) {
+      await assert.rejects(lifecycle.applyRun(RUN_ID), /timed out|expired/);
+      assert.equal(azure.state.submissions.length, 0);
+      assert.equal(requests.some(({ method }) => method === 'PUT'), false);
+    } else {
+      await lifecycle.applyRun(RUN_ID);
+      assert.equal(azure.state.submissions[0].submittedAt, now.toISOString());
+    }
+  }
+});
+
+test('CLI refuses Start and cleanup when actual RG metadata is foreign, even without stack.location', async (context) => {
+  context.mock.method(console, 'log', () => {});
+  for (const group of [{ ...RUN_GROUP, location: CONFIG.workloadLocation }, { ...RUN_GROUP, id: DATA_GROUP_ID }, { ...RUN_GROUP, tags: {} }]) {
+    const { azure, lifecycle, requests } = fakeLifecycle();
+    const send = azure.arm;
+    azure.arm = async (path, options) => path.startsWith(`${GROUP_ID}?`) ? { status: 200, body: group } : send(path, options);
+    await assert.rejects(lifecycle.start(), /ownership or metadata/);
+    assert.equal(azure.state.phase, 'Idle');
+    azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+    await assert.rejects(lifecycle.stop(RUN_ID, { confirm: RUN_ID }), /ownership or metadata/);
+    assert.equal(azure.state.phase, 'Stopping');
+    assert.equal(requests.some(({ method }) => ['PUT', 'DELETE'].includes(method)), false);
+  }
+});
+
+test('the exact direct rejection is durably failed, while unrecognized 400 and 500 remain pending', async (context) => {
+  context.mock.method(console, 'log', () => {});
+  for (const fault of ['known', 'generic400', '500']) {
+    const { azure, lifecycle } = fakeLifecycle();
+    azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+    const send = azure.arm;
+    azure.arm = async (path, options = {}) => {
+      if (options.method === 'PUT') {
+        assert.ok(pendingSubmission(azure.state));
+        if (fault === '500') throw new AzureError('PUT stack', 500);
+        const response = rejectedStackResponse(azure.state.stackId);
+        if (fault === 'generic400') response.body.error.message = 'Unrecognized InvalidDeployment failure';
+        return response;
+      }
+      return send(path, options);
+    };
+    await assert.rejects(lifecycle.applyRun(RUN_ID), fault === 'known' ? /definitive rejection recorded/ : /unresolved|500/);
+    if (fault === 'known') {
+      assert.equal(pendingSubmission(azure.state), null);
+      assert.equal(azure.state.submissions[0].evidence.source, 'response');
+      await lifecycle.stop(RUN_ID, { confirm: RUN_ID });
+      assert.equal(azure.state.phase, 'Idle');
+      assert.equal(azure.state.lastSubmissions[0].result, 'failed');
+    } else {
+      await assert.rejects(lifecycle.stop(RUN_ID, { confirm: RUN_ID }), UnresolvedSubmissionError);
+      assert.equal(azure.state.phase, 'Stopping');
+      assert.ok(pendingSubmission(azure.state));
+      await assert.rejects(lifecycle.start(), /Cannot Start/);
+    }
+  }
+});
+
+test('operator Activity recovery settles only intent; normal Stop must still verify all inventories', async (context) => {
+  context.mock.method(console, 'log', () => {});
+  const { azure, lifecycle, requests, submissionId } = rejectionRecovery();
+  await lifecycle.reconcileRejection(RUN_ID, submissionId, EVENT_ID);
+  assert.equal(azure.state.phase, 'Stopping');
+  assert.equal(pendingSubmission(azure.state), null);
+  assert.equal(azure.state.submissions[0].evidence.eventDataId, EVENT_ID);
+  assert.equal(requests.some(({ method }) => ['POST', 'PUT', 'DELETE'].includes(method)), false);
+  assert.equal(azure.calls.filter(({ body }) => body?.phase).length, 1);
+  assert.equal(azure.calls.some(({ body }) => body?.phase === 'Idle'), false);
+  const send = azure.arm;
+  let leftover = true;
+  azure.arm = async (path, options) => path.startsWith(`${MANAGED_GROUP_ID}?`) && leftover
+    ? { status: 200 } : send(path, options);
+  lifecycle.pause = async () => { throw new Error('bounded cleanup wait'); };
+  await assert.rejects(lifecycle.stop(RUN_ID, { confirm: RUN_ID }), /bounded cleanup/);
+  assert.equal(azure.state.phase, 'Stopping');
+  leftover = false;
+  await lifecycle.stop(RUN_ID, { confirm: RUN_ID });
+  assert.equal(azure.state.phase, 'Idle');
+  assert.equal(azure.state.lastSubmissions[0].evidence.kind, 'validation-rejection');
+});
+
+test('a lost direct-rejection receipt still blocks Off until operator evidence is durably recorded', async (context) => {
+  context.mock.method(console, 'log', () => {});
+  const { azure, lifecycle } = fakeLifecycle();
+  azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+  const send = azure.arm;
+  azure.arm = async (path, options = {}) => {
+    if (options.method === 'PUT') return rejectedStackResponse(azure.state.stackId);
+    if (path.includes('/Microsoft.Insights/eventtypes/management/values?')) return { status: 200, body: { value: [rejectionEvent(azure.state)] } };
+    return send(path, options);
+  };
+  const save = azure.request.bind(azure);
+  azure.request = async (url, options) => {
+    if (options.body?.submissions?.[0]?.status === 'terminal') throw new AzureError('Receipt persistence', 'TimeoutError');
+    return save(url, options);
+  };
+  await assert.rejects(lifecycle.applyRun(RUN_ID), /Receipt persistence/);
+  await assert.rejects(lifecycle.stop(RUN_ID, { confirm: RUN_ID }), UnresolvedSubmissionError);
+  assert.equal(azure.state.phase, 'Stopping');
+  assert.ok(pendingSubmission(azure.state));
+  azure.request = save;
+  await lifecycle.reconcileRejection(RUN_ID, pendingSubmission(azure.state).id, EVENT_ID);
+  await lifecycle.stop(RUN_ID, { confirm: RUN_ID });
+  assert.equal(azure.state.phase, 'Idle');
+});
+
+test('recovery refuses workflow identities, wrong IDs and mismatched evidence without changing intent', async () => {
+  for (const fault of ['identity', 'run', 'submission', 'event', 'client', 'stale', 'foreign']) {
+    const { azure, lifecycle, event, submissionId } = rejectionRecovery();
+    if (fault === 'identity') azure.guard = async () => ({ user: { type: 'servicePrincipal' } });
+    if (fault === 'client') event.httpRequest.clientRequestId = EVENT_ID;
+    if (fault === 'stale') event.eventTimestamp = new Date(TEST_NOW.getTime() - 1).toISOString();
+    if (fault === 'foreign') event.properties.entity = event.properties.entity.replace(GROUP_ID, DATA_GROUP_ID);
+    const before = structuredClone(azure.state);
+    await assert.rejects(lifecycle.reconcileRejection(fault === 'run' ? 'a'.repeat(32) : RUN_ID,
+      fault === 'submission' ? EVENT_ID : submissionId, fault === 'event' ? submissionId : EVENT_ID));
+    assert.deepEqual(azure.state, before);
+    assert.equal(azure.calls.some(({ method }) => method === 'PUT'), false);
+  }
+});
+
+test('Activity recovery of a rejected later stage preserves the preceding generation proof', async (context) => {
+  context.mock.method(console, 'log', () => {});
+  const { azure, lifecycle } = fakeLifecycle();
+  azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
+  await lifecycle.applyRun(RUN_ID);
+  const previous = structuredClone(azure.state.submissions[0]);
+  const send = azure.arm;
+  azure.arm = async (path, options = {}) => {
+    if (options.method === 'PUT') throw new AzureError('PUT stage', 'TimeoutError');
+    if (path.includes('/Microsoft.Insights/eventtypes/management/values?')) return { body: { value: [rejectionEvent(azure.state)] } };
+    return send(path, options);
+  };
+  await assert.rejects(lifecycle.applyRun(RUN_ID), /TimeoutError/);
+  await assert.rejects(lifecycle.stop(RUN_ID, { confirm: RUN_ID }), UnresolvedSubmissionError);
+  await lifecycle.reconcileRejection(RUN_ID, pendingSubmission(azure.state).id, EVENT_ID);
+  assert.deepEqual(azure.state.submissions[0], previous);
+  assert.equal(azure.state.submissions[1].result, 'failed');
+  await lifecycle.stop(RUN_ID, { confirm: RUN_ID });
+  assert.equal(azure.state.phase, 'Idle');
+  assert.deepEqual(azure.state.lastSubmissions[0], previous);
+});
+
+test('recovery rereads the leased state and cannot settle a replacement run or client request', async () => {
+  for (const fault of ['new-run', 'new-client']) {
+    const { azure, lifecycle, submissionId } = rejectionRecovery();
+    const send = azure.arm;
+    azure.arm = async (path, options) => {
+      const result = await send(path, options);
+      if (path.includes('/Microsoft.Insights/eventtypes/management/values?')) {
+        if (fault === 'new-run') azure.state = {
+          ...beginSubmission(startState(idleState(TEST_NOW), { now: TEST_NOW, runId: 'a'.repeat(32) }), {}, TEST_NOW), phase: 'Stopping',
+        };
+        else azure.state.submissions[0].clientRequestId = EVENT_ID;
+      }
+      return result;
+    };
+    await assert.rejects(lifecycle.reconcileRejection(RUN_ID, submissionId, EVENT_ID), /lost the exact/);
+    assert.ok(pendingSubmission(azure.state));
+    assert.equal(azure.calls.some(({ body }) => body?.phase), false);
+  }
 });
 
 test('controlled expiry shortens only the matching run; the watchdog, not this command, deletes it', async (context) => {

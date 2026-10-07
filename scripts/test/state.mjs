@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { CONFIG, stackId, requireValue } from './config.mjs';
 import { AzureError } from './azure.mjs';
 import { PROTOCOL, operationUrl } from './operations.mjs';
+import { validRejectionEvidence } from './rejections.mjs';
 
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const terminalResults = ['succeeded', 'failed', 'canceled'];
@@ -47,7 +48,9 @@ export function validateState(value) {
       'Submission terminal evidence is incomplete.');
     if (submission.status === 'terminal') {
       requireValue(Number.isFinite(Date.parse(submission.completedAt))
-        && ['lro', 'deployment-generation'].includes(submission.evidence?.kind), 'Submission completion requires durable terminal evidence.');
+        && (['lro', 'deployment-generation'].includes(submission.evidence?.kind)
+          || validRejectionEvidence(submission.evidence, value.stackId, submission)),
+      'Submission completion requires durable terminal evidence.');
     }
   }
   requireValue(value.submissions.filter((submission) => submission.status === 'pending').length <= 1

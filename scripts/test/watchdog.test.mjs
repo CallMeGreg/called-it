@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { watchdogDefinition } from '../../infra/test/watchdog-definition.mjs';
 import { CONFIG, GROUP_ID, MANAGED_GROUP_ID } from './config.mjs';
-import { idleState, startState, extendState, beginSubmission, pendingSubmission } from './state.mjs';
-import { FOUNDATION, RUN_ID, TEST_NOW } from './test-fixtures.mjs';
+import { idleState, startState, extendState, beginSubmission, pendingSubmission, updateSubmission } from './state.mjs';
+import { FOUNDATION, RUN_ID, RUN_GROUP, TEST_NOW, EVENT_ID, rejectionEvent, rejectedStackResponse } from './test-fixtures.mjs';
 import { evaluate, actionMap } from './wdl-test-evaluator.mjs';
 import { PROTOCOL, operationUrl } from './operations.mjs';
+import { activityRejection, responseRejection } from './rejections.mjs';
 
 const definition = watchdogDefinition();
 const actions = actionMap(definition);
@@ -21,9 +22,11 @@ const context = (observed = state, current = state) => ({
   variables: { leaseId: 'test-lease' },
   bodies: {
     Read_state: observed, Read_current: current,
+    Read_run_group: structuredClone(RUN_GROUP),
     Read_cleanup_state: { ...current, phase: 'Stopping' }, Cleanup_pending: [],
     Finish_pending: [],
   },
+  outputs: { Read_run_group: { statusCode: 200 } },
   now: '2026-01-01T16:01:00.000Z',
 });
 
@@ -43,6 +46,8 @@ test('generated control actions stay within the Logic Apps eight-level nesting l
   assert.ok(depth(definition.actions) <= 8);
   assert.deepEqual(actions.Reconcile_claimed_run.runAfter, { Idle: ['Succeeded'] });
   assert.deepEqual(actions.Clean_claimed_run.runAfter, { Reconcile_claimed_run: ['Succeeded'] });
+  assert.deepEqual(actions.Read_submission_state.runAfter, { Guard_run_group: ['Succeeded'] });
+  assert.equal(evaluate(actions.Read_run_group.inputs.uri, context()), `https://management.azure.com${GROUP_ID}?api-version=2024-03-01`);
 });
 
 test('all HTTP calls use the assigned identity and Blob calls include required service/date headers', () => {
@@ -112,14 +117,24 @@ test('controller region mismatches fail closed for both Idle and active schema-v
 test('generated teardown rejects foreign resources and requires actual inventory and stack ownership', () => {
   const ctx = context();
   ctx.bodies.Read_stack = {
-    id: state.stackId, location: CONFIG.location, tags: { runId: RUN_ID, application: 'called-it', environment: 'test' },
+    id: state.stackId, tags: { runId: RUN_ID, application: 'called-it', environment: 'test' },
     properties: { resources: [], deploymentScope: GROUP_ID, denySettings: { mode: 'none' }, provisioningState: 'succeeded' },
   };
   ctx.bodies.Foreign_resources = [];
   assert.equal(evaluate(actions.Owned_stack.expression, ctx), true);
-  ctx.bodies.Read_stack.location = CONFIG.workloadLocation;
+  for (const deploymentScope of [null, undefined]) {
+    ctx.bodies.Read_stack.properties.deploymentScope = deploymentScope;
+    assert.equal(evaluate(actions.Owned_stack.expression, ctx), true);
+  }
+  ctx.bodies.Read_stack.properties.deploymentScope = GROUP_ID;
+  ctx.bodies.Read_run_group.location = CONFIG.workloadLocation;
   assert.equal(evaluate(actions.Owned_stack.expression, ctx), false);
-  ctx.bodies.Read_stack.location = CONFIG.location;
+  assert.equal(evaluate(actions.Guard_run_group.expression, ctx), false);
+  ctx.bodies.Read_run_group.location = CONFIG.location;
+  assert.equal(evaluate(actions.Guard_run_group.expression, ctx), true);
+  for (const group of [{ ...RUN_GROUP, id: MANAGED_GROUP_ID }, { ...RUN_GROUP, tags: {} }]) {
+    assert.equal(evaluate(actions.Guard_run_group.expression, { ...ctx, bodies: { ...ctx.bodies, Read_run_group: group } }), false);
+  }
   assert.equal(evaluate(actions.Foreign_resources.inputs.where, { ...ctx, item: { id: FOUNDATION.sqlServerId } }), true);
   ctx.bodies.Foreign_resources = [{ id: FOUNDATION.sqlServerId }];
   assert.equal(evaluate(actions.Owned_stack.expression, ctx), false);
@@ -143,7 +158,7 @@ test('generated cleanup never deletes either resource group or persistent data d
 test('Off requires a successful empty inventory, no continuation page, and managed group 404', () => {
   const ctx = context();
   ctx.bodies.Read_remaining = { value: [] };
-  ctx.outputs = { Read_remaining: { statusCode: 200 }, Read_managed_group: { statusCode: 200 } };
+  ctx.outputs = { ...ctx.outputs, Read_remaining: { statusCode: 200 }, Read_managed_group: { statusCode: 200 } };
   assert.equal(evaluate(actions.Check_empty.expression, ctx), false);
   ctx.outputs.Read_managed_group.statusCode = 404;
   assert.equal(evaluate(actions.Check_empty.expression, ctx), true);
@@ -207,13 +222,50 @@ test('WDL requires actual terminal evidence and normalizes ARM LRO status spelli
   assert.equal(evaluate(actions.Operation_terminal.expression, ctx), false);
 });
 
+test('WDL recognizes only exact failed rejection receipts at reconciliation, cleanup and Idle fences', () => {
+  const intent = beginSubmission(state, {}, TEST_NOW);
+  const entry = pendingSubmission(intent);
+  for (const evidence of [
+    responseRejection(rejectedStackResponse(intent.stackId), intent.stackId, entry, TEST_NOW),
+    activityRejection(rejectionEvent(intent), intent, entry, EVENT_ID, TEST_NOW),
+  ]) {
+    const settled = updateSubmission({ ...intent, phase: 'Stopping' }, entry.id, {
+      status: 'terminal', result: 'failed', evidence, completedAt: TEST_NOW.toISOString(),
+    }, TEST_NOW);
+    const item = settled.submissions[0];
+    const ctx = { ...context(settled, settled), item };
+    ctx.bodies.Read_submission_state = settled;
+    ctx.bodies.Read_finish = settled;
+    for (const name of ['Find_pending', 'Cleanup_pending', 'Finish_pending']) {
+      assert.equal(evaluate(actions[name].inputs.where, ctx), false);
+      for (const invalid of [
+        { ...item, result: 'succeeded' }, { ...item, status: 'pending' },
+        { ...item, evidence: { ...evidence, code: 'DeploymentFailed' } },
+        { ...item, evidence: { ...evidence, source: 'local-file' } },
+        { ...item, evidence: { ...evidence, stackId: `${intent.stackId}-other` } },
+        { ...item, evidence: { ...evidence, clientRequestId: EVENT_ID } },
+        { ...item, evidence: { ...evidence, observedAt: null } },
+        { ...item, evidence: { ...evidence, eventDataId: null, source: 'activity-log' } },
+        { ...item, operationUrl: 'a-conflicting-accepted-LRO' },
+      ]) assert.equal(evaluate(actions[name].inputs.where, { ...ctx, item: invalid }), true);
+    }
+    assert.equal(evaluate(actions.All_submissions_settled.expression, ctx), true);
+    assert.equal(evaluate(actions.Same_run.expression, ctx), true);
+    ctx.bodies.Read_run_group.location = 'centralus';
+    ctx.bodies.Read_remaining = { value: [] };
+    ctx.outputs.Read_remaining = { statusCode: 200 };
+    ctx.outputs.Read_managed_group = { statusCode: 404 };
+    assert.equal(evaluate(actions.Check_empty.expression, ctx), false);
+  }
+});
+
 test('an unresolved submission blocks both cleanup and the final Idle write even with an empty group', () => {
   const intent = beginSubmission(state, {}, TEST_NOW);
   const entry = pendingSubmission(intent);
   const ctx = context(intent, intent);
   ctx.bodies.Find_pending = [entry];
   ctx.bodies.Read_candidate = null;
-  ctx.outputs = { Read_candidate: { statusCode: 404 }, Read_remaining: { statusCode: 200 }, Read_managed_group: { statusCode: 404 } };
+  ctx.outputs = { ...ctx.outputs, Read_candidate: { statusCode: 404 }, Read_remaining: { statusCode: 200 }, Read_managed_group: { statusCode: 404 } };
   ctx.bodies.Read_remaining = { value: [] };
   ctx.bodies.Read_finish = { ...intent, phase: 'Stopping' };
   ctx.bodies.Cleanup_pending = [entry];
@@ -238,13 +290,13 @@ test('WDL requires the associated new deployment generation, not new tags and an
   const ctx = context(intent, intent);
   ctx.bodies.Find_pending = [entry];
   ctx.bodies.Read_candidate = {
-    id: intent.stackId, location: CONFIG.location, tags: { application: 'called-it', environment: 'test', runId: RUN_ID, submissionId: entry.id },
+    id: intent.stackId, tags: { application: 'called-it', environment: 'test', runId: RUN_ID, submissionId: entry.id },
     properties: {
       deploymentScope: GROUP_ID, parameters: { submissionId: { value: entry.id } },
       correlationId: oldStackCorrelation, deploymentId: priorId, provisioningState: 'succeeded',
     },
   };
-  ctx.outputs = { Read_candidate: { statusCode: 200 }, Read_submission_deployment: { statusCode: 200 } };
+  ctx.outputs = { ...ctx.outputs, Read_candidate: { statusCode: 200 }, Read_submission_deployment: { statusCode: 200 } };
   assert.equal(evaluate(actions.Candidate_generation.expression, ctx), false);
   ctx.bodies.Read_candidate.properties.correlationId = '30000000-0000-0000-0000-000000000001';
   ctx.bodies.Read_submission_deployment = {

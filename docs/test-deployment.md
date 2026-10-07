@@ -77,7 +77,12 @@ The database, vault and controller storage have `CanNotDelete` locks.
 unique random run ID. Its three successive versions are network/registry, migration
 Job, then application. Images must be digest-addressed images from that run's ACR.
 Every PUT also has a distinct durable submission ID, stamped on both the stack and
-the underlying Bicep deployment parameters.
+the underlying Bicep deployment parameters. Resource-group stack requests contain
+`tags` and `properties`, **not top-level `location`**. The request explicitly sets
+`properties.deploymentScope` to the exact run RG, `denySettings.mode=none`, and
+delete/detach actions. A returned null/omitted deployment scope means that same
+stack scope; any explicit different scope is refused. Regional metadata is verified
+by reading the owning RG, not by requiring a `location` field in the stack response.
 There is no placeholder image, `latest` release, or imperative Container App update.
 Removing stack-owned resources uses `actionOnUnmanage.resources=delete`; resource
 groups remain detached rather than being deleted by the controller.
@@ -91,7 +96,7 @@ groups remain detached rather than being deleted by the controller.
 | `called-it-test-cleanup` | Controller blob access; read/delete of reviewed run resource types and stack/cancel operations; no SQL/KV/storage or RG deletion |
 
 Deployer and cleanup also have subscription-level **group metadata read only**, needed
-to verify that the service-created ACA group disappears. The deployer cannot read
+to verify run-RG ownership/location and that the service-created ACA group disappears. The deployer cannot read
 `owner-recovery` or app secret values via its Key Vault grants. It is nevertheless a
 **trusted deployment principal**: permission to start/update the migration Job can run
 code as the SQL administrator. Restrict repository write access and TEST environment
@@ -218,9 +223,10 @@ Start performs these phases, in order:
    Docker availability and absence of old disposable/managed resources.
 2. Lease the state blob; require Idle; allocate a unique run and persist Starting plus
    its four-hour expiry **before** provisioning paid resources. Before **each** stack
-   PUT, persist its submission/client-request IDs and the prior deployment generation.
+   PUT, validate its exact payload, then persist its submission/client-request IDs,
+   submission time and prior deployment generation.
 3. Compile/apply the Central US Bicep network/registry stage while keeping stack
-   metadata in East US 2. Build the migration and API+web images
+   metadata inherited from the East US 2 run RG. Build the migration and API+web images
    on the runner, push to ACR, resolve immutable digests.
 4. Apply the Job stage, start one execution inside the VNet, and require success.
    An empty 202 Job-start response is followed through its validated ARM operation URL
@@ -234,6 +240,13 @@ Start performs these phases, in order:
 Start also verifies the actual SQL server is in Central US and remains
 public-network Disabled, the watchdog is in East US 2 with both expected region
 parameters, and the phone URL is an HTTPS `*.centralus.azurecontainerapps.io` origin.
+Each stage first calls the documented non-provisioning
+`POST {exact-stack-id}/validate?api-version=2024-03-01`. It sends the same
+`tags`/`properties` payload as the later PUT. A bodyless 202 is polled only through
+the validated ARM operation URL, honoring a bounded Retry-After. Validation has a
+five-minute deadline and no automatic resubmission; the lease is renewed and expiry
+is rechecked before the PUT. Validation failure/timeout creates no new submission
+intent and sends no stack PUT. It does not settle any earlier ambiguous PUT.
 
 A failed Start attempts the same guarded Stop. A lost/cancelled runner cannot disable
 the independent expiry watchdog. A Start against a non-Idle state fails rather than
@@ -354,6 +367,14 @@ states in both. A new tag paired with an old successful generation is not proof.
 A statusless 200/204 response alone is not proof either; it still requires the
 associated-generation checks.
 
+One narrowly recognized **pre-execution rejection** is also terminal failure:
+HTTP 400, `InvalidDeployment`, and the exact message that top-level `location` is
+not allowed for this exact stack name at resource-group scope. A direct response
+is reduced to a sanitized receipt and persisted under the same lease. Error bodies,
+credentials and arbitrary messages are not stored. All other 400/500 errors,
+timeouts and cancellations remain unresolved; `InvalidDeployment` by itself is
+not sufficient evidence.
+
 When no conclusive evidence is available, Stop fails closed in **Stopping**, keeps
 the pending record, alerts, and blocks another Start. Status includes the submission
 ID, client request ID, any saved operation URL, and prior generation IDs for Azure
@@ -363,8 +384,10 @@ treat a quiet interval as proof that a delayed request cannot materialize.
 If Azure cannot provide authoritative completion evidence, retain this blocked state
 and escalate the recorded identifiers to the operator/Azure support.
 
-Cleanup validates exact stack ID, ownership tags, resource inventory restricted to
-the run RG, deployment scope and `denySettings=none`. It cancels a safely scoped
+Cleanup first GETs the exact run RG and verifies its ID, East US 2 metadata location,
+and `called-it`/`test`/`disposable` ownership tags. It then validates exact stack ID,
+ownership tags, resource inventory restricted to the run RG, explicit or inherited
+same-RG deployment scope and `denySettings=none`. It cancels a safely scoped
 in-flight ARM deployment when necessary, then deletes only stack-owned resources.
 It never falls back to an unrestricted RG/resource deletion.
 
@@ -394,12 +417,52 @@ the deployer's Contributor and cleanup identity's read grants, rather than broad
 them to subscription Contributor. Azure CLI tokens are cached independently per
 audience only until their actual `expires_on` timestamp minus 60 seconds.
 
-The split-region controller definition is **2.1.0.0**; durable blob state remains
+The RG-stack/rejection-aware controller definition is **2.2.0.0**; durable blob state remains
 **schema v2**. Redeploy the matching foundation/controller before Start/Extend.
-Both region parameters and the controller version are checked, so the older 2.0.0.0
+Both region parameters and the controller version are checked, so the older 2.1.0.0
 definition is not accepted for a new launch. Existing schema-v2 state is preserved;
 schema-v1 blobs/writers are still rejected, not silently upgraded, because they may
 have unrecorded in-flight requests.
+
+### Recover a lost validation-rejection receipt
+
+Use the updated scripts in the same isolated **human operator** Azure CLI context.
+This command is deliberately unavailable to GitHub workflow identities and accepts
+no local event JSON. It requires the exact Stopping run, pending submission UUID and
+Azure Activity `eventDataId` from the failed PUT's EndRequest event:
+
+```bash
+node scripts/test/lifecycle.mjs reconcile-rejection \
+  --run-id <blocked-run-id> \
+  --submission-id <pending-submission-uuid> \
+  --event-id <azure-activity-event-data-uuid>
+
+# Reconciliation retains Stopping; normal inventory/managed-group checks are required.
+node scripts/test/lifecycle.mjs stop --run-id <blocked-run-id> --confirm <blocked-run-id>
+node scripts/test/lifecycle.mjs status
+
+# After verified Off, install the matching controller; do not reset the state blob.
+node scripts/test/lifecycle.mjs bootstrap
+```
+
+The helper fetches evidence itself from the authenticated, documented Activity Logs
+List API using the exact subscription/resource and a bounded submission-time window.
+It verifies event/resource/entity/request URI, operation, PUT method, exact pending
+client-request ID, EndRequest/Failed/BadRequest/statusCode, and the single allowed
+error code/message. Event time must be between the recorded submission time and five
+minutes later, and not in the future. This is a strict evidence-association bound,
+**not a quiet-period heuristic**. Scoped pagination is bounded to ten pages.
+An absent, stale, foreign, conflicting-LRO or unrecognized event leaves intent
+unresolved. Log ingestion can be delayed; absence never authorizes clearing state.
+
+Under a renewed lease it rereads the exact run/submission before recording only that
+intent as failed, with sanitized event/correlation IDs and timestamps. It never
+deletes resources or writes Idle. The old controller safely treats the new receipt
+as unresolved until the updated operator Stop verifies teardown; upgrading the
+controller is therefore done afterward while Off. Wait for the matching controller's
+healthy five-minute heartbeat before the next Start. If the immutable evidence is
+unavailable or does not meet every check, keep Stopping and escalate; there is no
+force-clear command.
 
 The watchdog and Owner email/budget alerts are safeguards, **not a hard billing
 cap or availability guarantee**. Azure outages, missed ticks, deleted/disabled
@@ -489,6 +552,9 @@ References: [Azure retail prices](https://prices.azure.com/api/retail/prices),
 [ACA billing](https://learn.microsoft.com/azure/container-apps/billing),
 [SQL identity/SID](https://learn.microsoft.com/azure/azure-sql/database/authentication-azure-ad-user-assigned-managed-identity),
 [deployment stacks](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deployment-stacks),
+[RG stack request contract](https://learn.microsoft.com/rest/api/resources/deployment-stacks/create-or-update-at-resource-group?view=rest-resources-2024-03-01),
+[RG stack preflight validation](https://learn.microsoft.com/rest/api/resources/deployment-stacks/validate-stack-at-resource-group?view=rest-resources-2024-03-01),
+[Activity Logs List/filter contract](https://learn.microsoft.com/rest/api/monitor/activity-logs/list?view=rest-monitor-2015-04-01),
 [ARM asynchronous operations and permissions](https://learn.microsoft.com/azure/azure-resource-manager/management/async-operations),
 [blob leases](https://learn.microsoft.com/rest/api/storageservices/lease-blob),
 [budget notifications](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-acm-create-budgets),

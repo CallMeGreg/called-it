@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
-  "contentVersion": "2.1.0.0",
+  "contentVersion": "2.2.0.0",
   "parameters": {
     "stateUrl": {
       "type": "String"
@@ -292,6 +292,53 @@
       "type": "If",
       "expression": "@and(equals(actions('Mark_stopping')?['status'],'Succeeded'),equals(actions('Release_state')?['status'],'Succeeded'))",
       "actions": {
+        "Read_run_group": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "@concat('https://management.azure.com',concat(parameters('runGroupId'),'?api-version=2024-03-01'))",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "https://management.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "none"
+            }
+          },
+          "operationOptions": "DisableAsyncPattern",
+          "limit": {
+            "timeout": "PT20S"
+          },
+          "runAfter": {}
+        },
+        "Guard_run_group": {
+          "type": "If",
+          "expression": "@and( equals(outputs('Read_run_group')?['statusCode'],200), equals(toLower(coalesce(body('Read_run_group')?['id'],'')),toLower(parameters('runGroupId'))), equals(body('Read_run_group')?['location'],parameters('controlLocation')), equals(body('Read_run_group')?['tags']?['application'],'called-it'), equals(body('Read_run_group')?['tags']?['environment'],'test'), equals(body('Read_run_group')?['tags']?['lifecycle'],'disposable') )",
+          "actions": {},
+          "else": {
+            "actions": {
+              "Refuse_run_group": {
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "code": "UnsafeRunGroup",
+                    "message": "The disposable TEST resource-group ID, ownership or metadata region is unexpected."
+                  }
+                },
+                "runAfter": {}
+              }
+            }
+          },
+          "runAfter": {
+            "Read_run_group": [
+              "Succeeded",
+              "Failed",
+              "TimedOut"
+            ]
+          }
+        },
         "Read_submission_state": {
           "type": "Http",
           "inputs": {
@@ -314,13 +361,17 @@
           "limit": {
             "timeout": "PT20S"
           },
-          "runAfter": {}
+          "runAfter": {
+            "Guard_run_group": [
+              "Succeeded"
+            ]
+          }
         },
         "Find_pending": {
           "type": "Query",
           "inputs": {
             "from": "@body('Read_submission_state')?['submissions']",
-            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),not(empty(item()?['completedAt']))))"
+            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),or(contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),and( equals(item()?['evidence']?['kind'],'validation-rejection'),equals(item()?['result'],'failed'), equals(item()?['evidence']?['statusCode'],400),equals(item()?['evidence']?['code'],'InvalidDeployment'), equals(item()?['evidence']?['reason'],'rg-stack-location-not-allowed'),equals(item()?['evidence']?['stackId'],body('Read_submission_state')?['stackId']), equals(item()?['evidence']?['clientRequestId'],item()?['clientRequestId']),empty(item()?['operationUrl']), not(empty(item()?['evidence']?['observedAt'])),not(empty(item()?['submittedAt'])), lessOrEquals(ticks(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['completedAt'],'0001-01-01T00:00:00Z'))), or(equals(item()?['evidence']?['source'],'response'),and( equals(item()?['evidence']?['source'],'activity-log'), and(equals(length(coalesce(item()?['evidence']?['eventDataId'],'')),36),equals(length(replace(coalesce(item()?['evidence']?['eventDataId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(item()?['evidence']?['eventDataId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))),and(equals(length(coalesce(item()?['evidence']?['correlationId'],'')),36),equals(length(replace(coalesce(item()?['evidence']?['correlationId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(item()?['evidence']?['correlationId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))), not(empty(item()?['evidence']?['eventTimestamp'])), lessOrEquals(ticks(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z')),ticks(addMinutes(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z'),5))) )) )),not(empty(item()?['completedAt']))))"
           },
           "runAfter": {
             "Read_submission_state": [
@@ -443,7 +494,7 @@
               "actions": {
                 "Candidate_generation": {
                   "type": "If",
-                  "expression": "@and( equals(outputs('Read_candidate')?['statusCode'],200), equals(toLower(coalesce(body('Read_candidate')?['id'],'')),toLower(body('Read_current')?['stackId'])), equals(body('Read_candidate')?['location'],parameters('controlLocation')), equals(body('Read_candidate')?['tags']?['runId'],body('Read_current')?['runId']), equals(body('Read_candidate')?['tags']?['application'],'called-it'),equals(body('Read_candidate')?['tags']?['environment'],'test'), equals(toLower(coalesce(body('Read_candidate')?['properties']?['deploymentScope'],'')),toLower(parameters('runGroupId'))), equals(body('Read_candidate')?['tags']?['submissionId'],first(body('Find_pending'))?['id']), equals(body('Read_candidate')?['properties']?['parameters']?['submissionId']?['value'],first(body('Find_pending'))?['id']), and(equals(length(coalesce(body('Read_candidate')?['properties']?['correlationId'],'')),36),equals(length(replace(coalesce(body('Read_candidate')?['properties']?['correlationId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(body('Read_candidate')?['properties']?['correlationId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))), not(equals(toLower(coalesce(body('Read_candidate')?['properties']?['correlationId'],'')),toLower(coalesce(first(body('Find_pending'))?['previousStackCorrelationId'],'')))), startsWith(toLower(coalesce(body('Read_candidate')?['properties']?['deploymentId'],'')),concat(toLower(parameters('runGroupId')),'/providers/microsoft.resources/deployments/')), not(contains(coalesce(body('Read_candidate')?['properties']?['deploymentId'],''),'..')), not(contains(coalesce(body('Read_candidate')?['properties']?['deploymentId'],''),'%')) )",
+                  "expression": "@and( equals(outputs('Read_candidate')?['statusCode'],200), equals(toLower(coalesce(body('Read_candidate')?['id'],'')),toLower(body('Read_current')?['stackId'])), and( equals(outputs('Read_run_group')?['statusCode'],200), equals(toLower(coalesce(body('Read_run_group')?['id'],'')),toLower(parameters('runGroupId'))), equals(body('Read_run_group')?['location'],parameters('controlLocation')), equals(body('Read_run_group')?['tags']?['application'],'called-it'), equals(body('Read_run_group')?['tags']?['environment'],'test'), equals(body('Read_run_group')?['tags']?['lifecycle'],'disposable') ), equals(body('Read_candidate')?['tags']?['runId'],body('Read_current')?['runId']), equals(body('Read_candidate')?['tags']?['application'],'called-it'),equals(body('Read_candidate')?['tags']?['environment'],'test'), or(equals(body('Read_candidate')?['properties']?['deploymentScope'],null),equals(toLower(coalesce(body('Read_candidate')?['properties']?['deploymentScope'],'')),toLower(parameters('runGroupId')))), equals(body('Read_candidate')?['tags']?['submissionId'],first(body('Find_pending'))?['id']), equals(body('Read_candidate')?['properties']?['parameters']?['submissionId']?['value'],first(body('Find_pending'))?['id']), and(equals(length(coalesce(body('Read_candidate')?['properties']?['correlationId'],'')),36),equals(length(replace(coalesce(body('Read_candidate')?['properties']?['correlationId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(body('Read_candidate')?['properties']?['correlationId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))), not(equals(toLower(coalesce(body('Read_candidate')?['properties']?['correlationId'],'')),toLower(coalesce(first(body('Find_pending'))?['previousStackCorrelationId'],'')))), startsWith(toLower(coalesce(body('Read_candidate')?['properties']?['deploymentId'],'')),concat(toLower(parameters('runGroupId')),'/providers/microsoft.resources/deployments/')), not(contains(coalesce(body('Read_candidate')?['properties']?['deploymentId'],''),'..')), not(contains(coalesce(body('Read_candidate')?['properties']?['deploymentId'],''),'%')) )",
                   "actions": {
                     "Read_submission_deployment": {
                       "type": "Http",
@@ -768,7 +819,7 @@
           "type": "Query",
           "inputs": {
             "from": "@body('Read_cleanup_state')?['submissions']",
-            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),not(empty(item()?['completedAt']))))"
+            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),or(contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),and( equals(item()?['evidence']?['kind'],'validation-rejection'),equals(item()?['result'],'failed'), equals(item()?['evidence']?['statusCode'],400),equals(item()?['evidence']?['code'],'InvalidDeployment'), equals(item()?['evidence']?['reason'],'rg-stack-location-not-allowed'),equals(item()?['evidence']?['stackId'],body('Read_cleanup_state')?['stackId']), equals(item()?['evidence']?['clientRequestId'],item()?['clientRequestId']),empty(item()?['operationUrl']), not(empty(item()?['evidence']?['observedAt'])),not(empty(item()?['submittedAt'])), lessOrEquals(ticks(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['completedAt'],'0001-01-01T00:00:00Z'))), or(equals(item()?['evidence']?['source'],'response'),and( equals(item()?['evidence']?['source'],'activity-log'), and(equals(length(coalesce(item()?['evidence']?['eventDataId'],'')),36),equals(length(replace(coalesce(item()?['evidence']?['eventDataId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(item()?['evidence']?['eventDataId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))),and(equals(length(coalesce(item()?['evidence']?['correlationId'],'')),36),equals(length(replace(coalesce(item()?['evidence']?['correlationId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(item()?['evidence']?['correlationId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))), not(empty(item()?['evidence']?['eventTimestamp'])), lessOrEquals(ticks(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z')),ticks(addMinutes(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z'),5))) )) )),not(empty(item()?['completedAt']))))"
           },
           "runAfter": {
             "Read_cleanup_state": [
@@ -850,7 +901,7 @@
                 },
                 "Check_empty": {
                   "type": "If",
-                  "expression": "@and(equals(outputs('Read_remaining')?['statusCode'],200),not(equals(body('Read_remaining')?['value'],null)),empty(body('Read_remaining')?['value']),empty(body('Read_remaining')?['nextLink']),equals(outputs('Read_managed_group')?['statusCode'],404))",
+                  "expression": "@and(and( equals(outputs('Read_run_group')?['statusCode'],200), equals(toLower(coalesce(body('Read_run_group')?['id'],'')),toLower(parameters('runGroupId'))), equals(body('Read_run_group')?['location'],parameters('controlLocation')), equals(body('Read_run_group')?['tags']?['application'],'called-it'), equals(body('Read_run_group')?['tags']?['environment'],'test'), equals(body('Read_run_group')?['tags']?['lifecycle'],'disposable') ),equals(outputs('Read_remaining')?['statusCode'],200),not(equals(body('Read_remaining')?['value'],null)),empty(body('Read_remaining')?['value']),empty(body('Read_remaining')?['nextLink']),equals(outputs('Read_managed_group')?['statusCode'],404))",
                   "actions": {
                     "Acquire_finish": {
                       "type": "Http",
@@ -910,7 +961,7 @@
                           "type": "Query",
                           "inputs": {
                             "from": "@body('Read_finish')?['submissions']",
-                            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),not(empty(item()?['completedAt']))))"
+                            "where": "@not(and(equals(item()?['status'],'terminal'),contains(createArray('succeeded','failed','canceled'),toLower(coalesce(item()?['result'],''))),or(contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),and( equals(item()?['evidence']?['kind'],'validation-rejection'),equals(item()?['result'],'failed'), equals(item()?['evidence']?['statusCode'],400),equals(item()?['evidence']?['code'],'InvalidDeployment'), equals(item()?['evidence']?['reason'],'rg-stack-location-not-allowed'),equals(item()?['evidence']?['stackId'],body('Read_finish')?['stackId']), equals(item()?['evidence']?['clientRequestId'],item()?['clientRequestId']),empty(item()?['operationUrl']), not(empty(item()?['evidence']?['observedAt'])),not(empty(item()?['submittedAt'])), lessOrEquals(ticks(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['completedAt'],'0001-01-01T00:00:00Z'))), or(equals(item()?['evidence']?['source'],'response'),and( equals(item()?['evidence']?['source'],'activity-log'), and(equals(length(coalesce(item()?['evidence']?['eventDataId'],'')),36),equals(length(replace(coalesce(item()?['evidence']?['eventDataId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(item()?['evidence']?['eventDataId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))),and(equals(length(coalesce(item()?['evidence']?['correlationId'],'')),36),equals(length(replace(coalesce(item()?['evidence']?['correlationId'],''),'-','')),32),empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(toLower(replace(coalesce(item()?['evidence']?['correlationId'],''),'-','')),'0',''),'1',''),'2',''),'3',''),'4',''),'5',''),'6',''),'7',''),'8',''),'9',''),'a',''),'b',''),'c',''),'d',''),'e',''),'f',''))), not(empty(item()?['evidence']?['eventTimestamp'])), lessOrEquals(ticks(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z')),ticks(coalesce(item()?['evidence']?['observedAt'],'0001-01-01T00:00:00Z'))), lessOrEquals(ticks(coalesce(item()?['evidence']?['eventTimestamp'],'0001-01-01T00:00:00Z')),ticks(addMinutes(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z'),5))) )) )),not(empty(item()?['completedAt']))))"
                           },
                           "runAfter": {
                             "Read_finish": [
@@ -1053,7 +1104,7 @@
                       },
                       "Owned_stack": {
                         "type": "If",
-                        "expression": "@and(equals(body('Read_stack')?['location'],parameters('controlLocation')),empty(body('Foreign_resources')),not(equals(body('Read_stack')?['properties']?['resources'],null)),equals(toLower(body('Read_stack')?['id']),toLower(body('Read_current')?['stackId'])),equals(body('Read_stack')?['tags']?['runId'],body('Read_current')?['runId']),equals(body('Read_stack')?['tags']?['application'],'called-it'),equals(body('Read_stack')?['tags']?['environment'],'test'),equals(toLower(body('Read_stack')?['properties']?['deploymentScope']),toLower(parameters('runGroupId'))),equals(body('Read_stack')?['properties']?['denySettings']?['mode'],'none'),contains(createArray('creating','validating','waiting','deploying','canceling','updatingdenyassignments','deletingresources','deleting','succeeded','failed','canceled'),toLower(coalesce(body('Read_stack')?['properties']?['provisioningState'],''))))",
+                        "expression": "@and(and( equals(outputs('Read_run_group')?['statusCode'],200), equals(toLower(coalesce(body('Read_run_group')?['id'],'')),toLower(parameters('runGroupId'))), equals(body('Read_run_group')?['location'],parameters('controlLocation')), equals(body('Read_run_group')?['tags']?['application'],'called-it'), equals(body('Read_run_group')?['tags']?['environment'],'test'), equals(body('Read_run_group')?['tags']?['lifecycle'],'disposable') ),empty(body('Foreign_resources')),not(equals(body('Read_stack')?['properties']?['resources'],null)),equals(toLower(body('Read_stack')?['id']),toLower(body('Read_current')?['stackId'])),equals(body('Read_stack')?['tags']?['runId'],body('Read_current')?['runId']),equals(body('Read_stack')?['tags']?['application'],'called-it'),equals(body('Read_stack')?['tags']?['environment'],'test'),or(equals(body('Read_stack')?['properties']?['deploymentScope'],null),equals(toLower(coalesce(body('Read_stack')?['properties']?['deploymentScope'],'')),toLower(parameters('runGroupId')))),equals(body('Read_stack')?['properties']?['denySettings']?['mode'],'none'),contains(createArray('creating','validating','waiting','deploying','canceling','updatingdenyassignments','deletingresources','deleting','succeeded','failed','canceled'),toLower(coalesce(body('Read_stack')?['properties']?['provisioningState'],''))))",
                         "actions": {
                           "Deployment_busy": {
                             "type": "If",

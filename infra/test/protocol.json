@@ -1,6 +1,12 @@
 {
   "stateVersion": 2,
-  "controllerVersion": "2.1.0.0",
+  "controllerVersion": "2.2.0.0",
+  "validationRejection": {
+    "statusCode": 400,
+    "code": "InvalidDeployment",
+    "reason": "rg-stack-location-not-allowed",
+    "windowSeconds": 300
+  },
   "stackStates": {
     "inFlight": ["creating", "validating", "waiting", "deploying", "canceling", "updatingDenyAssignments"],
     "deleting": ["deletingResources", "deleting"],

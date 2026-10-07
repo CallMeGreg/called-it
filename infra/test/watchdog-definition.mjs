@@ -65,17 +65,47 @@ const pending = `first(${body('Find_pending')})`;
 const candidate = body('Read_candidate');
 const deployment = body('Read_submission_deployment');
 const set = (value, entries) => Object.entries(entries).reduce((result, [key, property]) => `setProperty(${result},'${key}',${property})`, value);
+const rejectionProof = (source) => {
+  const evidence = "item()?['evidence']";
+  const rule = protocol.validationRejection;
+  const timestamp = (value) => `ticks(coalesce(${value},'0001-01-01T00:00:00Z'))`;
+  return `and(
+    equals(${evidence}?['kind'],'validation-rejection'),equals(item()?['result'],'failed'),
+    equals(${evidence}?['statusCode'],${rule.statusCode}),equals(${evidence}?['code'],'${rule.code}'),
+    equals(${evidence}?['reason'],'${rule.reason}'),equals(${evidence}?['stackId'],${body(source)}?['stackId']),
+    equals(${evidence}?['clientRequestId'],item()?['clientRequestId']),empty(item()?['operationUrl']),
+    not(empty(${evidence}?['observedAt'])),not(empty(item()?['submittedAt'])),
+    lessOrEquals(${timestamp("item()?['submittedAt']")},${timestamp(`${evidence}?['observedAt']`)}),
+    lessOrEquals(${timestamp(`${evidence}?['observedAt']`)},${timestamp("item()?['completedAt']")}),
+    or(equals(${evidence}?['source'],'response'),and(
+      equals(${evidence}?['source'],'activity-log'),
+      ${guid(`${evidence}?['eventDataId']`)},${guid(`${evidence}?['correlationId']`)},
+      not(empty(${evidence}?['eventTimestamp'])),
+      lessOrEquals(${timestamp("item()?['submittedAt']")},${timestamp(`${evidence}?['eventTimestamp']`)}),
+      lessOrEquals(${timestamp(`${evidence}?['eventTimestamp']`)},${timestamp(`${evidence}?['observedAt']`)}),
+      lessOrEquals(${timestamp(`${evidence}?['eventTimestamp']`)},ticks(addMinutes(coalesce(item()?['submittedAt'],'0001-01-01T00:00:00Z'),${rule.windowSeconds / 60})))
+    ))
+  )`.replace(/\s+/g, ' ');
+};
 const pendingQuery = (source, runAfter) => ({
   type: 'Query',
   inputs: {
     from: expr(`${body(source)}?['submissions']`),
-    where: expr(`not(and(equals(item()?['status'],'terminal'),${terminal("item()?['result']")},contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),not(empty(item()?['completedAt']))))`),
+    where: expr(`not(and(equals(item()?['status'],'terminal'),${terminal("item()?['result']")},or(contains(createArray('lro','deployment-generation'),item()?['evidence']?['kind']),${rejectionProof(source)}),not(empty(item()?['completedAt']))))`),
   },
   runAfter,
 });
 const due = (name) => `or(equals(${body(name)}?['phase'],'Stopping'),lessOrEquals(ticks(coalesce(${body(name)}?['expiresAt'],'9999-12-31T23:59:59Z')),ticks(utcNow())))`;
 const runId = (name) => `${body(name)}?['runId']`;
 const validLocations = `and(equals(${param('controlLocation')},'${config.location}'),equals(${param('workloadLocation')},'${config.workloadLocation}'))`;
+const validRunGroup = `and(
+  equals(${status('Read_run_group')},200),
+  equals(toLower(coalesce(${body('Read_run_group')}?['id'],'')),toLower(${param('runGroupId')})),
+  equals(${body('Read_run_group')}?['location'],${param('controlLocation')}),
+  equals(${body('Read_run_group')}?['tags']?['application'],'called-it'),
+  equals(${body('Read_run_group')}?['tags']?['environment'],'test'),
+  equals(${body('Read_run_group')}?['tags']?['lifecycle'],'disposable')
+)`.replace(/\s+/g, ' ');
 const removeHex = (value) => [...'0123456789abcdef'].reduce((v, c) => `replace(${v},'${c}','')`, value);
 const guid = (value) => `and(equals(length(coalesce(${value},'')),36),equals(length(replace(coalesce(${value},''),'-','')),32),empty(${removeHex(`toLower(replace(coalesce(${value},''),'-',''))`)}))`;
 const validActive = (name) => `and(
@@ -164,10 +194,10 @@ function reconciliation() {
   const candidateMatches = `and(
     equals(${status('Read_candidate')},200),
     equals(toLower(coalesce(${candidate}?['id'],'')),toLower(${body('Read_current')}?['stackId'])),
-    equals(${candidate}?['location'],${param('controlLocation')}),
+    ${validRunGroup},
     equals(${candidate}?['tags']?['runId'],${runId('Read_current')}),
     equals(${candidate}?['tags']?['application'],'called-it'),equals(${candidate}?['tags']?['environment'],'test'),
-    equals(toLower(coalesce(${candidate}?['properties']?['deploymentScope'],'')),toLower(${param('runGroupId')})),
+    or(equals(${candidate}?['properties']?['deploymentScope'],null),equals(toLower(coalesce(${candidate}?['properties']?['deploymentScope'],'')),toLower(${param('runGroupId')}))),
     equals(${candidate}?['tags']?['submissionId'],${pending}?['id']),
     equals(${candidate}?['properties']?['parameters']?['submissionId']?['value'],${pending}?['id']),
     ${guid(`${candidate}?['properties']?['correlationId']`)},
@@ -188,7 +218,11 @@ function reconciliation() {
     or(not(equals(${stackPhase('Read_candidate')},'succeeded')),equals(${stackPhase('Read_submission_deployment')},'succeeded'))
   )`.replace(/\s+/g, ' ');
   return {
-    Read_submission_state: storage('GET'),
+    Read_run_group: arm('GET', `concat(${param('runGroupId')},'?api-version=2024-03-01')`),
+    Guard_run_group: condition(validRunGroup, {},
+      { Refuse_run_group: terminate('UnsafeRunGroup', 'The disposable TEST resource-group ID, ownership or metadata region is unexpected.') },
+      after('Read_run_group', ['Succeeded', 'Failed', 'TimedOut'])),
+    Read_submission_state: storage('GET', '', {}, {}, after('Guard_run_group')),
     Find_pending: pendingQuery('Read_submission_state', after('Read_submission_state')),
     Has_pending_submission: condition(
       `not(empty(${body('Find_pending')}))`,
@@ -262,7 +296,7 @@ function verifiedIdle() {
     Read_remaining: arm('GET', `concat(${param('runGroupId')},'/resources?api-version=2021-04-01')`),
     Read_managed_group: arm('GET', `concat(${param('managedGroupId')},'?api-version=2024-03-01')`, after('Read_remaining')),
     Check_empty: condition(
-      `and(equals(${status('Read_remaining')},200),not(equals(${body('Read_remaining')}?['value'],null)),empty(${body('Read_remaining')}?['value']),empty(${body('Read_remaining')}?['nextLink']),equals(${status('Read_managed_group')},404))`,
+      `and(${validRunGroup},equals(${status('Read_remaining')},200),not(equals(${body('Read_remaining')}?['value'],null)),empty(${body('Read_remaining')}?['value']),empty(${body('Read_remaining')}?['nextLink']),equals(${status('Read_managed_group')},404))`,
       {
         Acquire_finish: lease('acquire'),
         Finish_locked: {
@@ -310,7 +344,7 @@ function cleanup() {
               runAfter: {},
             },
             Owned_stack: condition(
-              `and(equals(${body('Read_stack')}?['location'],${param('controlLocation')}),empty(body('Foreign_resources')),not(equals(${body('Read_stack')}?['properties']?['resources'],null)),equals(toLower(${body('Read_stack')}?['id']),toLower(${body('Read_current')}?['stackId'])),equals(${body('Read_stack')}?['tags']?['runId'],${runId('Read_current')}),equals(${body('Read_stack')}?['tags']?['application'],'called-it'),equals(${body('Read_stack')}?['tags']?['environment'],'test'),equals(toLower(${body('Read_stack')}?['properties']?['deploymentScope']),toLower(${param('runGroupId')})),equals(${body('Read_stack')}?['properties']?['denySettings']?['mode'],'none'),contains(${array(Object.values(stackStates).flat())},${stackPhase('Read_stack')}))`,
+              `and(${validRunGroup},empty(body('Foreign_resources')),not(equals(${body('Read_stack')}?['properties']?['resources'],null)),equals(toLower(${body('Read_stack')}?['id']),toLower(${body('Read_current')}?['stackId'])),equals(${body('Read_stack')}?['tags']?['runId'],${runId('Read_current')}),equals(${body('Read_stack')}?['tags']?['application'],'called-it'),equals(${body('Read_stack')}?['tags']?['environment'],'test'),or(equals(${body('Read_stack')}?['properties']?['deploymentScope'],null),equals(toLower(coalesce(${body('Read_stack')}?['properties']?['deploymentScope'],'')),toLower(${param('runGroupId')}))),equals(${body('Read_stack')}?['properties']?['denySettings']?['mode'],'none'),contains(${array(Object.values(stackStates).flat())},${stackPhase('Read_stack')}))`,
               {
                 Deployment_busy: condition(
                   `contains(${array(stackStates.inFlight)},${stackPhase('Read_stack')})`,

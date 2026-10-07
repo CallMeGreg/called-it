@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { Azure, sleep } from './azure.mjs';
+import { Azure, AzureError, sleep } from './azure.mjs';
 import { CONFIG, GROUP_ID, DATA_GROUP_ID, MANAGED_GROUP_ID, STACK_API, assertAppUrl, assertDigest, requireValue, stackId } from './config.mjs';
 import { StateStore, idleState, startState, extendState, stopState, validateState, pendingSubmission, beginSubmission, updateSubmission, validDeploymentId } from './state.mjs';
 import { hashes, readBundle, parseBundle, writePrivate, assertBundleUpdate } from './invites.mjs';
 import { PROTOCOL, STACK_STATES, stackPhase, responseOperationUrl, responseOperationUrls, operationUrl, operationPhase, armPath } from './operations.mjs';
 import { generationCandidate, generationEvidence } from './submissions.mjs';
+import { assertRecoveryIds, responseRejection, readActivityRejection, activityRejection } from './rejections.mjs';
 
 const SECRET_NAMES = { signingKey: 'auth-signing-key', contactsPepper: 'contacts-pepper', invitesJson: 'test-invites' };
 const printable = (state) => ({
@@ -21,17 +22,23 @@ const printable = (state) => ({
 export function assertOwnedStack(stack, state) {
   validateState(state);
   requireValue(stack?.id?.toLowerCase() === state.stackId.toLowerCase(), 'Unexpected deployment stack ID.');
-  requireValue(stack.location === CONFIG.location, 'Unexpected deployment-stack metadata region.');
   requireValue(stack.tags?.runId === state.runId && stack.tags?.application === 'called-it'
     && stack.tags?.environment === 'test', 'Stack ownership tags do not match this TEST run.');
-  requireValue(stack.properties?.deploymentScope?.toLowerCase() === GROUP_ID.toLowerCase()
-    && stack.properties.denySettings?.mode === 'none', 'Refusing a stack with unexpected deployment scope or deny settings.');
+  const scope = stack.properties?.deploymentScope;
+  requireValue((scope == null || (typeof scope === 'string' && scope.toLowerCase() === GROUP_ID.toLowerCase()))
+    && stack.properties?.denySettings?.mode === 'none', 'Refusing a stack with unexpected deployment scope or deny settings.');
   requireValue(Array.isArray(stack.properties.resources), 'Stack resource inventory is unavailable.');
   for (const resource of stack.properties.resources) {
     requireValue(typeof resource.id === 'string'
       && resource.id.toLowerCase().startsWith(`${GROUP_ID.toLowerCase()}/providers/`),
     'Refusing teardown: the stack owns a resource outside the disposable TEST group.');
   }
+}
+
+export function assertOwnedRunGroup(group) {
+  requireValue(group?.id?.toLowerCase() === GROUP_ID.toLowerCase() && group.location === CONFIG.location
+    && group.tags?.application === 'called-it' && group.tags?.environment === 'test'
+    && group.tags?.lifecycle === 'disposable', 'Disposable TEST resource-group ownership or metadata region is unexpected.');
 }
 
 export class UnresolvedSubmissionError extends Error {
@@ -69,7 +76,13 @@ export class Lifecycle {
     return resources;
   }
 
+  async runGroup(signal) {
+    const group = (await this.azure.arm(`${GROUP_ID}?api-version=2024-03-01`, { signal })).body;
+    assertOwnedRunGroup(group);
+  }
+
   async verifyOff() {
+    await this.runGroup();
     const remaining = await this.resources();
     requireValue(remaining.length === 0, 'Paid or unknown resources remain in the disposable group. Refusing to mark Off or start a new run.');
     const managed = await this.azure.arm(`${MANAGED_GROUP_ID}?api-version=2024-03-01`, { allowed: [200, 404] });
@@ -111,6 +124,39 @@ export class Lifecycle {
     return current;
   }
 
+  async validateRun(current, body, signal) {
+    const deadline = Math.min(this.now().getTime() + 5 * 60_000, Date.parse(current.expiresAt));
+    let response = await this.azure.arm(`${current.stackId}/validate?api-version=${STACK_API}`, {
+      method: 'POST', body, allowed: [200, 202, 400], signal,
+    });
+    let url;
+    let asynchronous;
+    let location;
+    for (let attempt = 0; attempt < 60 && this.now().getTime() < deadline; attempt++) {
+      signal.throwIfAborted();
+      const phase = operationPhase(response);
+      requireValue(response.status !== 400 && !response.body?.error && !['failed', 'canceled'].includes(phase),
+        'Stack preflight validation failed; no PUT intent or request was submitted for this stage. Inspect Azure validation diagnostics.');
+      const properties = response.body?.properties;
+      if (response.status === 200 && Array.isArray(properties?.validatedResources)) return;
+      const links = responseOperationUrls(response, 'Microsoft.Resources', current.stackId);
+      asynchronous = links.asynchronous ?? asynchronous;
+      location = links.location ?? location;
+      if (phase === 'succeeded') {
+        requireValue(location && location !== url, 'Stack validation completed without its final validation result; no PUT was submitted.');
+        asynchronous = null;
+        url = location;
+      } else url = asynchronous ?? location ?? url;
+      requireValue(url, 'Stack validation is incomplete without a scoped polling URL; no PUT was submitted.');
+      const retry = response.headers?.get('retry-after');
+      await this.pause(/^\d{1,3}$/.test(retry ?? '') ? Math.max(1, Math.min(10, Number(retry))) * 1000 : 5_000);
+      signal.throwIfAborted();
+      requireValue(this.now().getTime() < deadline, 'Stack validation timed out or the run expired; no PUT was submitted.');
+      response = await this.azure.arm(armPath(url), { allowed: [200, 202, 400], signal });
+    }
+    throw new Error('Stack preflight validation timed out; no PUT intent or request was submitted for this stage.');
+  }
+
   async applyRun(runId, { migrationImage = '', apiImage = '', secretUris = {} } = {}) {
     const template = await this.azure.compile('infra/test/run.bicep');
     await this.azure.guard();
@@ -126,6 +172,7 @@ export class Lifecycle {
       requireValue(current.runId === runId && current.phase === 'Starting'
         && Date.parse(current.expiresAt) > this.now().getTime(), 'Start lost its lifecycle claim.');
       requireValue(!pendingSubmission(current), 'An unresolved PUT must be reconciled before another submission.');
+      await this.runGroup(signal);
       const previous = await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`, { allowed: [200, 404], signal });
       let baseline = {};
       if (previous.status === 200) {
@@ -146,28 +193,41 @@ export class Lifecycle {
         };
         requireValue(baseline.stackCorrelationId && baseline.deploymentCorrelationId, 'Missing prior generation correlation IDs.');
       } else requireValue(current.submissions.length === 0, 'The preceding stack generation disappeared; refusing an untracked replacement PUT.');
-      const intent = beginSubmission(current, baseline, this.now());
+      let intent = beginSubmission(current, baseline, this.now());
       submission = pendingSubmission(intent);
+      const body = {
+        tags: { application: 'called-it', environment: 'test', runId, submissionId: submission.id },
+        properties: {
+          actionOnUnmanage: { resources: 'delete', resourceGroups: 'detach', managementGroups: 'detach' },
+          denySettings: { mode: 'none' },
+          deploymentScope: GROUP_ID,
+          template,
+          parameters: Object.fromEntries(Object.entries({
+            location: CONFIG.workloadLocation, runId, submissionId: submission.id,
+            foundation: this.foundation, migrationImage, apiImage, secretUris,
+          }).map(([name, value]) => [name, { value }])),
+        },
+      };
+      await this.validateRun(current, body, signal);
+      requireValue(Date.parse(current.expiresAt) > this.now().getTime(), 'Run expired during stack validation; no PUT is allowed.');
+      const submittedAt = this.now().toISOString();
+      submission = { ...submission, submittedAt };
+      intent = { ...intent, submissions: [...current.submissions, submission], updatedAt: submittedAt };
       // This write must succeed before sending any bytes of a potentially ambiguous ARM PUT.
       await write(intent);
       const response = await this.azure.arm(`${current.stackId}?api-version=${STACK_API}`, {
-        method: 'PUT', allowed: [200, 201, 202], signal,
+        method: 'PUT', allowed: [200, 201, 202, 400], signal,
         headers: { 'x-ms-client-request-id': submission.clientRequestId },
-        body: {
-          location: CONFIG.location,
-          tags: { application: 'called-it', environment: 'test', runId, submissionId: submission.id },
-          properties: {
-            actionOnUnmanage: { resources: 'delete', resourceGroups: 'detach', managementGroups: 'detach' },
-            denySettings: { mode: 'none' },
-            deploymentScope: GROUP_ID,
-            template,
-            parameters: Object.fromEntries(Object.entries({
-              location: CONFIG.workloadLocation, runId, submissionId: submission.id,
-              foundation: this.foundation, migrationImage, apiImage, secretUris,
-            }).map(([name, value]) => [name, { value }])),
-          },
-        },
+        body,
       });
+      if (response.status === 400) {
+        const evidence = responseRejection(response, current.stackId, submission, this.now());
+        if (evidence) await write(updateSubmission(intent, submission.id, {
+          status: 'terminal', result: 'failed', evidence, completedAt: this.now().toISOString(),
+        }, this.now()));
+        throw new AzureError(evidence ? 'Stack PUT (definitive rejection recorded; guarded Stop required)'
+          : 'Stack PUT (unrecognized rejection; submission remains unresolved)', response.status);
+      }
       const url = responseOperationUrl(response, 'Microsoft.Resources', current.stackId);
       if (url) await write(updateSubmission(intent, submission.id, { operationUrl: url }, this.now()));
     });
@@ -219,6 +279,35 @@ export class Lifecycle {
       }, this.now()));
     });
     return { resolved: true, ...proof };
+  }
+
+  async reconcileRejection(runId, submissionId, eventDataId) {
+    stackId(runId);
+    assertRecoveryIds(submissionId, eventDataId);
+    const account = await this.azure.guard();
+    requireValue(account.user?.type === 'user', 'Activity rejection recovery requires the authorized human operator, not a workflow identity.');
+    await this.runGroup();
+    const current = await this.store.read();
+    const submission = pendingSubmission(current);
+    requireValue(current.phase === 'Stopping' && current.runId === runId && submission?.id === submissionId,
+      'Rejection recovery requires the exact Stopping run and its pending submission.');
+    requireValue(!submission.operationUrl, 'An accepted LRO cannot be superseded by a validation-rejection receipt.');
+    const event = await readActivityRejection(this.azure, current, submission, eventDataId, this.now());
+    await this.store.locked(async (latest, write) => {
+      const pending = pendingSubmission(latest);
+      requireValue(latest.phase === 'Stopping' && latest.runId === runId && pending?.id === submissionId
+        && pending.clientRequestId === submission.clientRequestId && pending.submittedAt === submission.submittedAt,
+      'Rejection recovery lost the exact pending run/submission; no evidence was applied.');
+      const evidence = activityRejection(event, latest, pending, eventDataId, this.now());
+      await write({
+        ...updateSubmission(latest, submissionId, {
+          status: 'terminal', result: 'failed', evidence, completedAt: this.now().toISOString(),
+        }, this.now()),
+        lastError: 'The rejected PUT is reconciled with Azure Activity evidence. Confirmed Stop must still verify complete teardown.',
+      });
+    });
+    console.log(JSON.stringify({ runId, submissionId, eventDataId, result: 'failed', phase: 'Stopping',
+      next: 'Run confirmed Stop; this command neither deletes resources nor marks Off.' }, null, 2));
   }
 
   async secretUris() {
@@ -432,6 +521,7 @@ export class Lifecycle {
           return;
         }
         requireValue(current.runId === runId && current.phase === 'Stopping', 'Cleanup lost ownership; refusing any more mutations.');
+        await this.runGroup();
         if (pendingSubmission(current)) {
           const outcome = await this.reconcileSubmission(current);
           if (!outcome.resolved) throw new UnresolvedSubmissionError(outcome.submission);
@@ -585,19 +675,25 @@ export async function main(args = process.argv.slice(2)) {
     args, allowPositionals: true,
     options: {
       'register-providers': { type: 'boolean' }, 'run-id': { type: 'string' },
+      'submission-id': { type: 'string' }, 'event-id': { type: 'string' },
       confirm: { type: 'string' }, file: { type: 'string' }, output: { type: 'string' },
     },
   });
   const [action] = positionals;
   requireValue(positionals.length === 1, 'Specify exactly one TEST lifecycle action.');
-  requireValue(['preflight', 'bootstrap', 'publish-secrets', 'recover-secrets', 'start', 'status', 'extend', 'stop', 'expire'].includes(action),
-    'Use preflight, bootstrap, publish-secrets, recover-secrets, start, status, extend, stop, or expire.');
+  requireValue(['preflight', 'bootstrap', 'publish-secrets', 'recover-secrets', 'start', 'status', 'extend', 'stop', 'expire', 'reconcile-rejection'].includes(action),
+    'Use preflight, bootstrap, publish-secrets, recover-secrets, start, status, extend, stop, expire, or reconcile-rejection.');
   const allowedOptions = {
     preflight: [], bootstrap: ['register-providers'], 'publish-secrets': ['file'],
     'recover-secrets': ['output'], start: [], status: [], extend: ['run-id'],
     stop: ['run-id', 'confirm'], expire: ['run-id', 'confirm'],
+    'reconcile-rejection': ['run-id', 'submission-id', 'event-id'],
   }[action];
   requireValue(Object.keys(values).every((key) => allowedOptions.includes(key)), 'Unexpected options for this TEST lifecycle action.');
+  if (action === 'reconcile-rejection') {
+    stackId(values['run-id']);
+    assertRecoveryIds(values['submission-id'], values['event-id']);
+  }
   const azure = new Azure();
   await azure.guard();
   if (action === 'bootstrap') return bootstrap(azure, values['register-providers'] === true);
@@ -623,6 +719,7 @@ export async function main(args = process.argv.slice(2)) {
   if (action === 'status') return lifecycle.status();
   if (action === 'extend') return lifecycle.extend(values['run-id']);
   if (action === 'expire') return lifecycle.expire(values['run-id'], values.confirm);
+  if (action === 'reconcile-rejection') return lifecycle.reconcileRejection(values['run-id'], values['submission-id'], values['event-id']);
   return lifecycle.stop(values['run-id'], { confirm: values.confirm });
 }
 
