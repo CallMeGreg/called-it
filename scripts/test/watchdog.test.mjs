@@ -85,6 +85,7 @@ test('Idle/skipped claim actions cannot enter cleanup; both claim and release mu
 test('all generated action and parameter references resolve to declared names', () => {
   function inspect(value) {
     if (typeof value === 'string' && value.startsWith('@')) {
+      assert.ok(value.length <= 8192, 'WDL expression exceeds the service limit.');
       for (const match of value.matchAll(/\b(body|outputs|actions|parameters)\('([^']+)'\)/g)) {
         assert.ok(match[1] === 'parameters' ? match[2] in definition.parameters : match[2] in actions, `Unknown WDL reference ${match[2]}`);
       }
@@ -347,5 +348,45 @@ test('regional LRO allowlists distinguish control-plane stacks from workload Job
       assert.throws(() => operationUrl(url(other), provider, resource), /Refusing/);
     }
     assert.doesNotThrow(() => operationUrl(`${resource}/operationResults/result?api-version=2025-01-01`, provider, resource));
+  }
+});
+
+test('JS and WDL preserve signed regional stack receipts and reject changed scope or query shape', () => {
+  const intent = beginSubmission(state, {}, TEST_NOW);
+  const entry = pendingSubmission(intent);
+  const ctx = context(intent, intent);
+  ctx.bodies.Find_pending = [entry];
+  const root = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2`;
+  const query = '?api-version=2024-03-01&t=639269869167784920&c=certificate_fixture&s=signature_fixture&h=hash_fixture';
+  for (const kind of PROTOCOL.signedStackOperation.paths) {
+    const url = `${root}/${kind}/receipt${query}`;
+    entry.operationUrl = url;
+    assert.equal(operationUrl(url, 'Microsoft.Resources', state.stackId), url);
+    assert.equal(evaluate(actions.Safe_operation_url.expression, ctx), true);
+    for (const [index, invalid] of [
+      url.replace('management.azure.com', 'example.com'),
+      url.replace(CONFIG.subscriptionId, 'another-subscription'),
+      url.replace('/eastus2/', '/centralus/'),
+      url.replace('/Microsoft.Resources/', '/Microsoft.App/'),
+      url.replace(`/${kind}/`, '/operationResults/'),
+      url.replace('/receipt?', '/receipt/another?'),
+      url.replace('/receipt?', '/?'),
+      url.replace('2024-03-01', '2025-01-01'),
+      url.replace('t=639269869167784920', 't=not-a-timestamp'),
+      url.replace('t=639269869167784920', 't=t=639269869167784920'),
+      url.replace('c=certificate_fixture', 'c='),
+      url.replace('&s=', '&c='),
+      url.replace('&h=', '&unexpected='),
+      url.replace('signature_fixture', 'signature%2Ffixture'),
+      ...[' ', '\t', '\r', '\n', '\\', '..'].map((value) => url.replace('signature_fixture', `signature${value}fixture`)),
+      `${url}&monitor=true`,
+      `${url}&api-version=2024-03-01`,
+      `${url}#fragment`,
+      url.replace('certificate_fixture', 'A'.repeat(PROTOCOL.signedStackOperation.maxUrlLength)),
+    ].entries()) {
+      entry.operationUrl = invalid;
+      assert.throws(() => operationUrl(invalid, 'Microsoft.Resources', state.stackId), /Refusing/);
+      assert.equal(evaluate(actions.Safe_operation_url.expression, ctx), false, `${kind} rejection case ${index}`);
+    }
   }
 });

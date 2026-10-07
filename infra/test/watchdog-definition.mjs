@@ -106,7 +106,8 @@ const validRunGroup = `and(
   equals(${body('Read_run_group')}?['tags']?['environment'],'test'),
   equals(${body('Read_run_group')}?['tags']?['lifecycle'],'disposable')
 )`.replace(/\s+/g, ' ');
-const removeHex = (value) => [...'0123456789abcdef'].reduce((v, c) => `replace(${v},'${c}','')`, value);
+const removeCharacters = (value, characters) => [...characters].reduce((v, c) => `replace(${v},'${c}','')`, value);
+const removeHex = (value) => removeCharacters(value, '0123456789abcdef');
 const guid = (value) => `and(equals(length(coalesce(${value},'')),36),equals(length(replace(coalesce(${value},''),'-','')),32),empty(${removeHex(`toLower(replace(coalesce(${value},''),'-',''))`)}))`;
 const validActive = (name) => `and(
   ${validLocations},
@@ -174,10 +175,27 @@ function reconciliation() {
   const scopedRoot = `concat('https://management.azure.com',toLower(${body('Read_current')}?['stackId']))`;
   const deploymentRoot = `concat(toLower(${param('runGroupId')}),'/providers/microsoft.resources/deployments/')`;
   const query = `uriQuery(${url})`;
-  const validQuery = `or(
+  const ordinaryQuery = `or(
     and(startsWith(${query},'?api-version='),or(equals(length(split(${query},'&')),1),
       and(equals(length(split(${query},'&')),2),or(endsWith(${query},'&monitor=true'),endsWith(${query},'&monitor=false'))))),
     and(equals(length(split(${query},'&')),2),or(startsWith(${query},'?monitor=true&api-version='),startsWith(${query},'?monitor=false&api-version=')))
+  )`;
+  const receipt = protocol.signedStackOperation;
+  const part = (index) => `coalesce(split(${query},'&')?[${index}],'')`;
+  const signedEndpoint = `or(${receipt.paths.map((kind) =>
+    `startsWith(${lowerUrl},concat(${providerRoot},'locations/',${param('controlLocation')},'/${kind.toLowerCase()}/'))`).join(',')})`;
+  const signedQuery = `and(
+    ${signedEndpoint},equals(length(split(uriPath(${url}),'/')),9),not(endsWith(uriPath(${url}),'/')),
+    lessOrEquals(length(${url}),${receipt.maxUrlLength}),
+    equals(length(split(${query},'&')),${receipt.queryParameters.length + 1}),
+    equals(${part(0)},'?api-version=${receipt.apiVersion}'),
+    ${receipt.queryParameters.map((key, index) =>
+    `and(startsWith(${part(index + 1)},'${key}='),not(equals(${part(index + 1)},'${key}=')))`).join(',')},
+    lessOrEquals(length(${part(1)}),22),equals(length(split(${part(1)},'=')),2),
+    empty(${removeCharacters(`replace(${part(1)},'t=','')`, '0123456789')}),
+    not(contains(${url},' ')),
+    not(contains(${url},decodeUriComponent('%09'))),not(contains(${url},decodeUriComponent('%0A'))),
+    not(contains(${url},decodeUriComponent('%0D')))
   )`;
   const urlRootOperation = ['operations', 'operationStatuses', 'operationResults', 'deploymentStackOperationStatuses', 'deploymentStackOperationResults']
     .map((kind) => `startsWith(${lowerUrl},concat(${providerRoot},'${kind.toLowerCase()}/'))`).join(',');
@@ -188,8 +206,8 @@ function reconciliation() {
        startsWith(${lowerUrl},concat(${scopedRoot},'/')),
        startsWith(${lowerUrl},concat(${scopedRoot},'?')),
        and(startsWith(${lowerUrl},concat('https://management.azure.com',${deploymentRoot})),or(contains(${lowerUrl},'/operationstatuses/'),contains(${lowerUrl},'/operationresults/'),contains(${lowerUrl},'/operations/')))),
-    not(contains(${url},'%')),not(contains(${url},'..')),not(contains(${url},'#')),not(contains(${url},'\\\\')),
-    ${validQuery}
+    not(contains(${url},'%')),not(contains(${url},'..')),not(contains(${url},'#')),not(contains(${url},'\\')),
+    or(${ordinaryQuery},${signedQuery})
   )`.replace(/\s+/g, ' ');
   const candidateMatches = `and(
     equals(${status('Read_candidate')},200),

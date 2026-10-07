@@ -1,6 +1,12 @@
 {
   "stateVersion": 2,
-  "controllerVersion": "2.2.0.0",
+  "controllerVersion": "2.3.0.0",
+  "signedStackOperation": {
+    "apiVersion": "2024-03-01",
+    "paths": ["deploymentStackOperationStatuses", "deploymentStackOperationResults"],
+    "queryParameters": ["t", "c", "s", "h"],
+    "maxUrlLength": 16384
+  },
   "validationRejection": {
     "statusCode": 400,
     "code": "InvalidDeployment",

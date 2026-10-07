@@ -351,8 +351,11 @@ work; this deployment does not produce a native binary.
 
 ## Expiry, failure and teardown verification
 
-The authoritative non-secret blob records scope, phase, run ID, stack ID, expiry and
-a schema-v2 submission ledger. There can be only one unresolved PUT at a time.
+The authoritative private blob records scope, phase, run ID, stack ID, expiry and
+a schema-v2 submission ledger. It contains no game data or application credentials,
+but may retain a complete signed ARM operation-tracking receipt. Keep raw state and
+controller run history private; console Status and error messages omit URL query
+metadata. There can be only one unresolved PUT at a time.
 Start/Extend/Stop use a finite 60-second blob lease; long local operations renew it
 and abort further requests if renewal fails. The watchdog observes every five minutes,
 reacquires the lease, rereads the current run/deadline and claims Stopping before
@@ -382,7 +385,7 @@ not sufficient evidence.
 
 When no conclusive evidence is available, Stop fails closed in **Stopping**, keeps
 the pending record, alerts, and blocks another Start. Status includes the submission
-ID, client request ID, any saved operation URL, and prior generation IDs for Azure
+ID, client request ID, any saved operation URL without its query, and prior generation IDs for Azure
 deployment/activity-history investigation. Later ticks retry reconciliation and
 delete the resulting stack once it is safe. Do not clear the ledger, force Idle, or
 treat a quiet interval as proof that a delayed request cannot materialize.
@@ -422,9 +425,17 @@ the deployer's Contributor and cleanup identity's read grants, rather than broad
 them to subscription Contributor. Azure CLI tokens are cached independently per
 audience only until their actual `expires_on` timestamp minus 60 seconds.
 
-The RG-stack/rejection-aware controller definition is **2.2.0.0**; durable blob state remains
+Azure can return signed tracking metadata (`t`, `c`, `s`, `h`) in a stack validation
+or deployment LRO URL. The CLI and watchdog accept this exact query shape only on
+the approved East US 2 regional deployment-stack operation status/result endpoints,
+with the expected API version and bounded URL length. Missing, duplicate, unknown
+or reordered parameters fail closed. The opaque receipt is preserved unchanged for
+authenticated polling; it is not reduced to a fabricated unsigned URL. This does
+not broaden the allowed subscription, provider, resource, or region.
+
+The signed-receipt-aware controller definition is **2.3.0.0**; durable blob state remains
 **schema v2**. Redeploy the matching foundation/controller before Start/Extend.
-Both region parameters and the controller version are checked, so the older 2.1.0.0
+Both region parameters and the controller version are checked, so the older 2.2.0.0
 definition is not accepted for a new launch. Existing schema-v2 state is preserved;
 schema-v1 blobs/writers are still rejected, not silently upgraded, because they may
 have unrecorded in-flight requests.

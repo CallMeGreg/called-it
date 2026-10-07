@@ -39,6 +39,8 @@ export function evaluate(expression, context) {
     endsWith: (value, suffix) => value.endsWith(suffix),
     split: (value, separator) => value.split(separator),
     uriQuery: (value) => new URL(value).search,
+    uriPath: (value) => new URL(value).pathname,
+    decodeUriComponent: decodeURIComponent,
     length: (value) => value.length,
     toLower: (value) => value.toLowerCase(),
     empty: (value) => value == null || value.length === 0,

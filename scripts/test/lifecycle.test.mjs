@@ -277,7 +277,7 @@ test('native bodyless 202 validation is polled before intent, using the exact RG
   const { azure, lifecycle, requests } = fakeLifecycle();
   azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
   const send = azure.arm;
-  const operation = `/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationResults/validation?api-version=2024-03-01`;
+  const operation = `/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationResults/validation?api-version=2024-03-01&t=639269869167784920&c=certificate_fixture&s=signature_fixture&h=hash_fixture`;
   let polls = 0;
   azure.arm = async (path, options = {}) => {
     if (path.includes('/validate?')) {
@@ -657,7 +657,7 @@ test('terminal failed/canceled LRO receipts settle exact submissions and permit 
     const { azure, lifecycle, requests } = fakeLifecycle();
     azure.state = startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
     const send = azure.arm;
-    const url = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationStatuses/1234?api-version=2024-03-01`;
+    const url = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationStatuses/1234?api-version=2024-03-01&t=639269869167784920&c=certificate_fixture&s=signature_fixture&h=hash_fixture`;
     azure.arm = async (path, options = {}) => {
       if (path.includes('/deploymentStackOperationStatuses/')) return { status: 200, body: { status: result } };
       const response = await send(path, options);
@@ -671,6 +671,27 @@ test('terminal failed/canceled LRO receipts settle exact submissions and permit 
     assert.equal(azure.state.phase, 'Idle');
     assert.ok(requests.some(({ method }) => method === 'DELETE'));
   }
+});
+
+test('Status and unresolved errors omit signed query metadata while retaining the full private receipt', async (context) => {
+  const output = [];
+  context.mock.method(console, 'log', (message) => output.push(message));
+  const { azure, lifecycle } = fakeLifecycle();
+  azure.state = beginSubmission(startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID }), {}, TEST_NOW);
+  const entry = pendingSubmission(azure.state);
+  const url = `https://management.azure.com/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Resources/locations/eastus2/deploymentStackOperationStatuses/receipt?api-version=2024-03-01&t=639269869167784920&c=certificate_fixture&s=signature_fixture&h=hash_fixture`;
+  entry.operationUrl = url;
+  await lifecycle.status();
+  const displayed = JSON.parse(output[0]).pendingSubmission;
+  assert.equal(displayed.id, entry.id);
+  assert.equal(displayed.operationUrl, url.split('?')[0]);
+  const error = new UnresolvedSubmissionError(entry);
+  for (const text of [output.join(''), error.message]) {
+    assert.equal(text.includes('signature_fixture'), false);
+    assert.equal(text.includes('certificate_fixture'), false);
+    assert.equal(text.includes('?api-version='), false);
+  }
+  assert.equal(pendingSubmission(azure.state).operationUrl, url);
 });
 
 test('all documented busy/deleting stack states avoid a premature DELETE', async (context) => {

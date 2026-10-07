@@ -7,17 +7,20 @@ import { Azure, AzureError, sleep } from './azure.mjs';
 import { CONFIG, GROUP_ID, DATA_GROUP_ID, MANAGED_GROUP_ID, STACK_API, assertAppUrl, assertDigest, requireValue, stackId } from './config.mjs';
 import { StateStore, idleState, startState, extendState, stopState, validateState, pendingSubmission, beginSubmission, updateSubmission, validDeploymentId } from './state.mjs';
 import { hashes, readBundle, parseBundle, writePrivate, assertBundleUpdate } from './invites.mjs';
-import { PROTOCOL, STACK_STATES, stackPhase, responseOperationUrl, responseOperationUrls, operationUrl, operationPhase, armPath } from './operations.mjs';
+import { PROTOCOL, STACK_STATES, stackPhase, responseOperationUrl, responseOperationUrls, operationUrl, operationUrlForDisplay, operationPhase, armPath } from './operations.mjs';
 import { generationCandidate, generationEvidence } from './submissions.mjs';
 import { assertRecoveryIds, responseRejection, readActivityRejection, activityRejection } from './rejections.mjs';
 
 const SECRET_NAMES = { signingKey: 'auth-signing-key', contactsPepper: 'contacts-pepper', invitesJson: 'test-invites' };
-const printable = (state) => ({
-  phase: state.phase, runId: state.runId, expiresAt: state.expiresAt, url: state.url,
-  lastError: state.lastError ?? null,
-  pendingSubmission: pendingSubmission(state),
-  retained: ['SQL accounts/results', 'Key Vault keys/invites', 'lifecycle controller'],
-});
+const printable = (state) => {
+  const pending = pendingSubmission(state);
+  return {
+    phase: state.phase, runId: state.runId, expiresAt: state.expiresAt, url: state.url,
+    lastError: state.lastError ?? null,
+    pendingSubmission: pending ? { ...pending, operationUrl: operationUrlForDisplay(pending.operationUrl) } : null,
+    retained: ['SQL accounts/results', 'Key Vault keys/invites', 'lifecycle controller'],
+  };
+};
 
 export function assertOwnedStack(stack, state) {
   validateState(state);
@@ -44,7 +47,7 @@ export function assertOwnedRunGroup(group) {
 export class UnresolvedSubmissionError extends Error {
   constructor(submission) {
     super(`Stack submission ${submission.id} (client request ${submission.clientRequestId}) is unresolved. `
-      + `Inspect its ${submission.operationUrl ? `ARM operation ${submission.operationUrl}` : 'Azure deployment/activity history and generation marker'}. `
+      + `Inspect its ${submission.operationUrl ? `ARM operation ${operationUrlForDisplay(submission.operationUrl)} (full receipt retained privately)` : 'Azure deployment/activity history and generation marker'}. `
       + 'Ownership remains Stopping; a 404 or empty inventory is not completion evidence. Do not clear the ledger or start another run.');
   }
 }

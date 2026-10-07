@@ -29,16 +29,38 @@ export function operationUrl(value, provider, resourceId) {
   const deploymentOperation = provider === 'Microsoft.Resources'
     && path.startsWith(`${GROUP_ID.toLowerCase()}/providers/microsoft.resources/deployments/`)
     && /\/operation(?:statuses|results|s)\//.test(path);
+  const receipt = PROTOCOL.signedStackOperation;
+  const signedEndpoint = provider === 'Microsoft.Resources' && receipt.paths.some((kind) => {
+    const prefix = `${regional}${kind.toLowerCase()}/`;
+    return path.startsWith(prefix) && path.length > prefix.length && !path.slice(prefix.length).includes('/');
+  });
+  const parts = url.search.split('&');
+  const signedQuery = signedEndpoint && value.length <= receipt.maxUrlLength
+    && !/[\s%\\]/.test(value) && !value.includes('..')
+    && parts.length === receipt.queryParameters.length + 1
+    && parts[0] === `?api-version=${receipt.apiVersion}`
+    && /^t=\d{1,20}$/.test(parts[1] ?? '')
+    && receipt.queryParameters.every((key, index) =>
+      parts[index + 1]?.startsWith(`${key}=`) && parts[index + 1].length > key.length + 1);
+  const keys = [...url.searchParams.keys()];
+  const ordinaryQuery = keys.length === new Set(keys).size
+    && keys.every((key) => ['api-version', 'monitor'].includes(key))
+    && (!url.searchParams.has('monitor') || ['true', 'false'].includes(url.searchParams.get('monitor')))
+    && /^\d{4}-\d{2}-\d{2}(?:-preview)?$/.test(url.searchParams.get('api-version') ?? '');
   requireValue(url.origin === 'https://management.azure.com' && !url.username && !url.password && !url.hash
     && !url.pathname.includes('%') && !url.pathname.includes('..')
     && (path.startsWith(regional) || path.startsWith(scoped) || path === resourceId.toLowerCase() || rootOperation || deploymentOperation)
-    && [...url.searchParams.keys()].every((key) => ['api-version', 'monitor'].includes(key))
-    && (!url.searchParams.has('monitor') || ['true', 'false'].includes(url.searchParams.get('monitor')))
-    && /^\d{4}-\d{2}-\d{2}(?:-preview)?$/.test(url.searchParams.get('api-version') ?? ''),
+    && (ordinaryQuery || signedQuery),
   'Refusing an ARM operation URL outside the approved subscription, provider, region, or resource.');
   requireValue(resourceId.toLowerCase().startsWith(`${GROUP_ID.toLowerCase()}/providers/${provider.toLowerCase()}/`),
     'The operation resource is outside the disposable TEST group.');
   return url.href;
+}
+
+export function operationUrlForDisplay(value) {
+  if (!value) return null;
+  const url = new URL(value);
+  return `${url.origin}${url.pathname}`;
 }
 
 export function responseOperationUrls(response, provider, resourceId) {
