@@ -141,12 +141,12 @@ exclusively under `tests/`. No mock accounts or scores are included in the app b
 
 ```bash
 npm run export:web
-npx playwright install chromium   # only needed when Chromium is not installed
+npx playwright install chromium webkit   # only needed when these browsers are not installed
 npm run test:e2e
 ```
 
 Playwright starts a loopback-only static test server at `http://127.0.0.1:43817`.
-It covers 320px/390px phone layouts, accessible 48px+ choice targets, authoritative
+It covers Chromium and WebKit at 320px/390px phone layouts, accessible 48px+ choice targets, authoritative
 save/lock behavior, reload/logout isolation, result rendering, board filtering,
 countdown rollover, offline/background polling, retry, and explicit storage fallback.
 Screenshots/traces are written under ignored `test-results/`.

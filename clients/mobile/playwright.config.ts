@@ -15,6 +15,8 @@ export default defineConfig({
   projects: [
     { name: 'narrow-phone', use: { viewport: { width: 320, height: 740 }, isMobile: true, hasTouch: true } },
     { name: 'phone', use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
+    { name: 'webkit-narrow-phone', use: { browserName: 'webkit', viewport: { width: 320, height: 740 }, isMobile: true, hasTouch: true } },
+    { name: 'webkit-phone', use: { browserName: 'webkit', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
   ],
   webServer: {
     command: 'node tests/serve-web.mjs',
