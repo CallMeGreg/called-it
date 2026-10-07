@@ -8,22 +8,19 @@ param registryName string
 @description('Tags applied to every resource.')
 param tags object
 
-@description('ACR SKU.')
-@allowed([ 'Basic', 'Standard', 'Premium' ])
-param sku string = 'Basic'
-
 @description('Principal id of the identity that pulls images.')
 param pullPrincipalId string
 
-resource registry 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
+resource registry 'Microsoft.ContainerRegistry/registries@2025-11-01' = {
   name: registryName
   location: location
   tags: tags
   sku: {
-    name: sku
+    name: 'Basic'
   }
   properties: {
     adminUserEnabled: false
+    roleAssignmentMode: 'LegacyRegistryPermissions'
   }
 }
 
@@ -43,3 +40,4 @@ resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 output loginServer string = registry.properties.loginServer
 output name string = registry.name
+output id string = registry.id

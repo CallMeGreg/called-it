@@ -1,131 +1,127 @@
-name: Deploy
+name: Deployment foundation (opt-in)
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Target environment
+        description: Protected target environment (both run Production)
         type: choice
         options: [dev, prod]
         default: dev
+      phase:
+        description: Plan is local-only; other phases require environment approval and explicit enablement
+        type: choice
+        options: [plan, foundation, build-images, application]
+        default: plan
+      apply:
+        description: Allow paid mutation (otherwise foundation/application run what-if; builds remain read-only)
+        type: boolean
+        default: false
+      api_image:
+        description: Application phase only - full ACR called-it-api@sha256:digest
+        type: string
+        default: ''
+      workers_image:
+        description: Application phase only - full ACR called-it-workers@sha256:digest
+        type: string
+        default: ''
   push:
     branches: [main]
     paths:
-      - 'src/**'
       - 'infra/**'
-      - 'Dockerfile'
-      - 'Dockerfile.workers'
       - '.github/workflows/deploy.yml'
 
-# OIDC federated login to Azure — no cloud passwords stored in GitHub.
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
-  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  group: deployment-${{ inputs.environment || 'dev' }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
+  plan:
+    name: Local-only validation (no login or mutation)
     runs-on: ubuntu-latest
-    # Auto-deploy on push only after CD is enabled (set the repository variable
-    # AZURE_DEPLOY_ENABLED=true once environments + OIDC are configured). Manual
-    # runs via "Run workflow" always proceed. See the manual-setup issue.
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.AZURE_DEPLOY_ENABLED == 'true' }}
-    environment: ${{ github.event.inputs.environment || 'dev' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up pinned Bicep
+        run: az bicep install --version v0.48.1
+      - name: Compile with non-secret fixtures and test preflight/policy
+        run: python3 infra/scripts/validate.py --bicep "$HOME/.azure/bin/bicep"
+      - name: State the no-op boundary
+        run: python3 infra/scripts/deploy.py --phase plan
+
+  azure:
+    name: Explicit ${{ inputs.phase }} (${{ inputs.environment }})
+    needs: plan
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.phase != 'plan' }}
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
     env:
-      ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      PHASE: ${{ inputs.phase }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      APPLY: ${{ inputs.apply }}
+      AZURE_DEPLOY_ENABLED: ${{ vars.AZURE_DEPLOY_ENABLED }}
+      AZURE_ENVIRONMENT_APPROVAL_CONFIGURED: ${{ vars.AZURE_ENVIRONMENT_APPROVAL_CONFIGURED }}
+      AZURE_COST_APPROVED: ${{ vars.AZURE_COST_APPROVED }}
+      AZURE_FOUNDATION_APPROVED: ${{ vars.AZURE_FOUNDATION_APPROVED }}
+      SQL_BOOTSTRAP_APPROVED: ${{ vars.SQL_BOOTSTRAP_APPROVED }}
+      APPLICATION_ROLLOUT_APPROVED: ${{ vars.APPLICATION_ROLLOUT_APPROVED }}
+      PUSH_CONFIGURATION_APPROVED: ${{ vars.PUSH_CONFIGURATION_APPROVED }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX || 'calledit' }}
+      SQL_ENTRA_ADMIN_OBJECT_ID: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
+      SQL_ENTRA_ADMIN_LOGIN: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
+      SQL_ENTRA_ADMIN_PRINCIPAL_TYPE: ${{ vars.SQL_ENTRA_ADMIN_PRINCIPAL_TYPE || 'Group' }}
+      SQL_ALLOWED_CLIENT_IPS: ${{ vars.SQL_ALLOWED_CLIENT_IPS || '[]' }}
+      IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      API_IMAGE: ${{ inputs.api_image }}
+      WORKERS_IMAGE: ${{ inputs.workers_image }}
+      APPLICATION_REVISION_SUFFIX: r${{ github.run_id }}-${{ github.run_attempt }}
+      AUTH_SIGNING_KEY_SECRET_URI: ${{ vars.AUTH_SIGNING_KEY_SECRET_URI }}
+      CONTACTS_PEPPER_SECRET_URI: ${{ vars.CONTACTS_PEPPER_SECRET_URI }}
+      SOCIAL_AUTH_APPLE_AUDIENCE: ${{ vars.SOCIAL_AUTH_APPLE_AUDIENCE }}
+      SOCIAL_AUTH_GOOGLE_AUDIENCE: ${{ vars.SOCIAL_AUTH_GOOGLE_AUDIENCE }}
+      PUSH_PROVIDER: ${{ vars.PUSH_PROVIDER || 'Disabled' }}
+      NOTIFICATION_HUB_NAME: ${{ vars.NOTIFICATION_HUB_NAME }}
+      NOTIFICATION_HUB_CONNECTION_SECRET_URI: ${{ vars.NOTIFICATION_HUB_CONNECTION_SECRET_URI }}
+      API_MIN_REPLICAS: ${{ vars.API_MIN_REPLICAS || '1' }}
+      API_MAX_REPLICAS: ${{ vars.API_MAX_REPLICAS || '2' }}
+      API_HTTP_CONCURRENT_REQUESTS: ${{ vars.API_HTTP_CONCURRENT_REQUESTS || '20' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Azure login (OIDC)
+      - name: Reject missing inputs/approval before Azure login
+        run: |
+          args=(--phase "$PHASE" --environment "$ENVIRONMENT" --check)
+          if [[ "$APPLY" == 'true' ]]; then
+            args+=(--apply)
+          fi
+          python3 infra/scripts/deploy.py "${args[@]}"
+
+      - name: Azure login (environment-scoped OIDC)
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Compute image tag
-        id: tag
-        run: echo "sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - name: Set up pinned Bicep
+        run: az bicep install --version v0.48.1
 
-      # 1) Converge infrastructure (idempotent). Creates/updates ACR, SQL, Redis,
-      #    Container Apps, etc. Secrets are supplied as environment variables that the
-      #    .bicepparam file reads via readEnvironmentVariable(...).
-      - name: Deploy infrastructure (Bicep)
-        id: infra
-        env:
-          SQL_ADMIN_PASSWORD: ${{ secrets.SQL_ADMIN_PASSWORD }}
-          AUTH_SIGNING_KEY: ${{ secrets.AUTH_SIGNING_KEY }}
-          CONTACTS_PEPPER: ${{ secrets.CONTACTS_PEPPER }}
-          SQL_AAD_ADMIN_OBJECT_ID: ${{ secrets.SQL_AAD_ADMIN_OBJECT_ID }}
-          SQL_AAD_ADMIN_LOGIN: ${{ vars.SQL_AAD_ADMIN_LOGIN }}
-          ACS_FROM_NUMBER: ${{ vars.ACS_FROM_NUMBER }}
+      - name: Run only the explicitly selected phase
         run: |
-          set -euo pipefail
-          outputs=$(az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "calledit-${ENVIRONMENT}-${{ steps.tag.outputs.sha }}" \
-            --template-file infra/main.bicep \
-            --parameters "infra/main.${ENVIRONMENT}.bicepparam" \
-            --query properties.outputs -o json)
-          echo "acrName=$(echo "$outputs"    | jq -r .acrName.value)"       >> "$GITHUB_OUTPUT"
-          echo "apiName=$(echo "$outputs"    | jq -r .apiName.value)"       >> "$GITHUB_OUTPUT"
-          echo "workersName=$(echo "$outputs"| jq -r .workersName.value)"   >> "$GITHUB_OUTPUT"
-          echo "acrServer=$(echo "$outputs"  | jq -r .acrLoginServer.value)">> "$GITHUB_OUTPUT"
-          echo "apiFqdn=$(echo "$outputs"    | jq -r .apiFqdn.value)"       >> "$GITHUB_OUTPUT"
-
-      # 2) Build both images on the runner and push to ACR.
-      #    We build here (rather than server-side via `az acr build`) because
-      #    `az acr build` runs an ACR Tasks quick task, and some subscriptions
-      #    block that with `TasksOperationsNotAllowed`. Pushing from the runner
-      #    only needs data-plane push rights, which the deploy identity's
-      #    Contributor role already grants. ubuntu-latest ships Docker/BuildKit.
-      - name: Log in to ACR
-        run: az acr login --name "${{ steps.infra.outputs.acrName }}"
-
-      - name: Build and push API image
-        env:
-          ACR_SERVER: ${{ steps.infra.outputs.acrServer }}
-          SHA: ${{ steps.tag.outputs.sha }}
-        run: |
-          docker build --file Dockerfile \
-            --tag "$ACR_SERVER/called-it-api:$SHA" \
-            --tag "$ACR_SERVER/called-it-api:latest" .
-          docker push "$ACR_SERVER/called-it-api:$SHA"
-          docker push "$ACR_SERVER/called-it-api:latest"
-
-      - name: Build and push Workers image
-        env:
-          ACR_SERVER: ${{ steps.infra.outputs.acrServer }}
-          SHA: ${{ steps.tag.outputs.sha }}
-        run: |
-          docker build --file Dockerfile.workers \
-            --tag "$ACR_SERVER/called-it-workers:$SHA" \
-            --tag "$ACR_SERVER/called-it-workers:latest" .
-          docker push "$ACR_SERVER/called-it-workers:$SHA"
-          docker push "$ACR_SERVER/called-it-workers:latest"
-
-      # 3) Roll both Container Apps to the freshly built images.
-      - name: Update API container app
-        run: |
-          az containerapp update \
-            --name "${{ steps.infra.outputs.apiName }}" \
-            --resource-group "$RESOURCE_GROUP" \
-            --image "${{ steps.infra.outputs.acrServer }}/called-it-api:${{ steps.tag.outputs.sha }}"
-
-      - name: Update Workers container app
-        run: |
-          az containerapp update \
-            --name "${{ steps.infra.outputs.workersName }}" \
-            --resource-group "$RESOURCE_GROUP" \
-            --image "${{ steps.infra.outputs.acrServer }}/called-it-workers:${{ steps.tag.outputs.sha }}"
-
-      - name: Summary
-        run: |
-          echo "### Deployed to ${ENVIRONMENT} :rocket:" >> "$GITHUB_STEP_SUMMARY"
-          echo "- API: https://${{ steps.infra.outputs.apiFqdn }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Image tag: \`${{ steps.tag.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          export BICEP="$HOME/.azure/bin/bicep"
+          args=(--phase "$PHASE" --environment "$ENVIRONMENT" --execute)
+          if [[ "$APPLY" == 'true' ]]; then
+            args+=(--apply)
+          fi
+          python3 infra/scripts/deploy.py "${args[@]}"

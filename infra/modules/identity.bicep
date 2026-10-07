@@ -1,5 +1,4 @@
-// User-assigned managed identity shared by the API and Workers container apps. All service-to-Azure
-// auth (ACR pull, Key Vault, Storage, App Configuration, SQL) uses this identity — no secrets.
+// Shared beta runtime identity for ACR pull, Key Vault references and separately granted SQL access.
 @description('Azure region for the resources.')
 param location string
 

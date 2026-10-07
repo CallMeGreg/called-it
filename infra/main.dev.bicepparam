@@ -1,31 +1,16 @@
 using './main.bicep'
 
 param environmentName = 'dev'
+param namePrefix = readEnvironmentVariable('AZURE_NAME_PREFIX', 'calledit')
+param location = readEnvironmentVariable('AZURE_LOCATION')
+param sqlEntraAdminObjectId = readEnvironmentVariable('SQL_ENTRA_ADMIN_OBJECT_ID')
+param sqlEntraAdminLogin = readEnvironmentVariable('SQL_ENTRA_ADMIN_LOGIN')
+param sqlEntraAdminPrincipalType = readEnvironmentVariable('SQL_ENTRA_ADMIN_PRINCIPAL_TYPE', 'Group')
+param sqlAllowedClientIps = json(readEnvironmentVariable('SQL_ALLOWED_CLIENT_IPS', '[]'))
 
-// SQL admin (password comes from a CI secret / environment variable, never source).
-param sqlAdministratorLogin = 'calleditadmin'
-param sqlAdministratorPassword = readEnvironmentVariable('SQL_ADMIN_PASSWORD', '')
-
-// Optional Entra admin for managed-identity SQL access.
-param sqlAadAdminObjectId = readEnvironmentVariable('SQL_AAD_ADMIN_OBJECT_ID', '')
-param sqlAadAdminLogin = readEnvironmentVariable('SQL_AAD_ADMIN_LOGIN', '')
-
-// App secrets (supplied by CI from Key Vault / GitHub secrets).
-param authSigningKey = readEnvironmentVariable('AUTH_SIGNING_KEY', '')
-param contactsPepper = readEnvironmentVariable('CONTACTS_PEPPER', '')
-
-// SMS sender number (empty until an ACS number is purchased — dev SMS is used meanwhile).
-param acsFromNumber = readEnvironmentVariable('ACS_FROM_NUMBER', '')
-
-param adminBootstrapPhones = [ '+15555550100' ]
-
-// Images (CD passes the freshly built, tagged images).
-param apiImage = readEnvironmentVariable('API_IMAGE', 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest')
-param workersImage = readEnvironmentVariable('WORKERS_IMAGE', 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest')
-
-// Sizing — smallest footprint for dev.
-param acrSku = 'Basic'
-param redisSkuName = 'Balanced_B0'
-param redisHighAvailability = false
-param minReplicas = 1
-param maxReplicas = 2
+// Review these hypotheses with a current quote and measurements before provisioning.
+param sqlMaxVcores = 1
+param sqlMinVcores = '0.5'
+param sqlAutoPauseDelay = -1
+param sqlMaxSizeGb = 5
+param logDailyCapGb = '0.1'

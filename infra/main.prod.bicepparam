@@ -1,37 +1,16 @@
 using './main.bicep'
 
 param environmentName = 'prod'
+param namePrefix = readEnvironmentVariable('AZURE_NAME_PREFIX', 'calledit')
+param location = readEnvironmentVariable('AZURE_LOCATION')
+param sqlEntraAdminObjectId = readEnvironmentVariable('SQL_ENTRA_ADMIN_OBJECT_ID')
+param sqlEntraAdminLogin = readEnvironmentVariable('SQL_ENTRA_ADMIN_LOGIN')
+param sqlEntraAdminPrincipalType = readEnvironmentVariable('SQL_ENTRA_ADMIN_PRINCIPAL_TYPE', 'Group')
+param sqlAllowedClientIps = json(readEnvironmentVariable('SQL_ALLOWED_CLIENT_IPS', '[]'))
 
-// SQL admin (password comes from a CI secret / environment variable, never source).
-param sqlAdministratorLogin = 'calleditadmin'
-param sqlAdministratorPassword = readEnvironmentVariable('SQL_ADMIN_PASSWORD', '')
-
-// Entra admin for managed-identity SQL access (strongly recommended in production).
-param sqlAadAdminObjectId = readEnvironmentVariable('SQL_AAD_ADMIN_OBJECT_ID', '')
-param sqlAadAdminLogin = readEnvironmentVariable('SQL_AAD_ADMIN_LOGIN', '')
-
-// After the one-time managed-identity contained-user step (see infra/README.md), set
-// SQL_AAD_ONLY_AUTH=true to disable SQL-auth logins so only Entra identities can connect.
-// Leave false for the very first deploy (before the contained user exists) to avoid lockout.
-param sqlAadOnlyAuthentication = toLower(readEnvironmentVariable('SQL_AAD_ONLY_AUTH', 'false')) == 'true'
-
-// App secrets (supplied by CI from Key Vault / GitHub secrets).
-param authSigningKey = readEnvironmentVariable('AUTH_SIGNING_KEY', '')
-param contactsPepper = readEnvironmentVariable('CONTACTS_PEPPER', '')
-
-// SMS sender number in E.164 (must be a provisioned ACS number in production).
-param acsFromNumber = readEnvironmentVariable('ACS_FROM_NUMBER', '')
-
-// Set the real admin phone numbers via CI (comma-free JSON) or edit here.
-param adminBootstrapPhones = []
-
-// Images (CD passes the freshly built, tagged images).
-param apiImage = readEnvironmentVariable('API_IMAGE', 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest')
-param workersImage = readEnvironmentVariable('WORKERS_IMAGE', 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest')
-
-// Sizing — resilient footprint for production.
-param acrSku = 'Standard'
-param redisSkuName = 'Balanced_B1'
-param redisHighAvailability = true
-param minReplicas = 2
-param maxReplicas = 10
+// "prod" is a deployment discriminator, not an HA, capacity or affordability claim.
+param sqlMaxVcores = 1
+param sqlMinVcores = '0.5'
+param sqlAutoPauseDelay = -1
+param sqlMaxSizeGb = 5
+param logDailyCapGb = '0.1'
