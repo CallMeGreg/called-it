@@ -257,6 +257,3 @@ identify changes in modified versions, and meet the license's source-code and co
 requirements. If you modify the software and users interact with that version over a network,
 you must prominently offer those users its Corresponding Source at no charge, as required by
 Section 13.
-
-This change does not revoke MIT permissions for versions previously released under MIT.
-Third-party components remain governed by their respective licenses.
