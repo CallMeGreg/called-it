@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout } from 'node:timers/promises';
-import { idleState, startState, extendState, stopState, validateState, StateStore } from './state.mjs';
+import { AzureError } from './azure.mjs';
+import { idleState, startState, extendState, stopState, beginSubmission, validateState, StateStore } from './state.mjs';
 import { RUN_ID, TEST_NOW, FOUNDATION, MemoryAzure } from './test-fixtures.mjs';
 
 const starting = () => startState(idleState(TEST_NOW), { now: TEST_NOW, runId: RUN_ID });
@@ -64,6 +65,58 @@ test('operation errors release the lease and initialization never replaces exist
   assert.equal(azure.state.runId, RUN_ID);
   await assert.rejects(store.locked(() => { throw new Error('expected test failure'); }), /expected test failure/);
   assert.equal(azure.leaseId, null);
+});
+
+test('initialization reads and preserves existing state after the native BlobAlreadyExists conflict', async () => {
+  for (const existing of [idleState(TEST_NOW), beginSubmission(starting(), {}, TEST_NOW)]) {
+    const calls = [];
+    const azure = {
+      async request(_url, options) {
+        calls.push(options);
+        if (options.method === 'PUT') throw new AzureError('Create lifecycle blob', 409, 'BlobAlreadyExists');
+        return { status: 200, body: structuredClone(existing) };
+      },
+    };
+    const before = structuredClone(existing);
+    await new StateStore(azure, FOUNDATION.stateUrl).initialize();
+    assert.deepEqual(calls.map((call) => call.method), ['PUT', 'GET']);
+    assert.equal(calls[0].headers['If-None-Match'], '*');
+    assert.deepEqual(existing, before);
+  }
+});
+
+test('initialization does not turn other conflicts or request failures into success', async () => {
+  for (const error of [
+    new AzureError('Create lifecycle blob', 409, 'LeaseAlreadyPresent'),
+    new AzureError('Create lifecycle blob', 409),
+    new AzureError('Create lifecycle blob', 500, 'BlobAlreadyExists'),
+    new Error('BlobAlreadyExists'),
+  ]) {
+    const calls = [];
+    const azure = { async request(_url, options) { calls.push(options.method); throw error; } };
+    await assert.rejects(new StateStore(azure, FOUNDATION.stateUrl).initialize(), (caught) => caught === error);
+    assert.deepEqual(calls, ['PUT']);
+  }
+});
+
+test('an existing blob still requires readable, valid lifecycle state', async () => {
+  for (const result of [
+    { status: 200, body: { ...idleState(TEST_NOW), schemaVersion: 1 } },
+    { status: 200, body: { ...idleState(TEST_NOW), subscriptionId: 'foreign-subscription' } },
+    new AzureError('Read lifecycle blob', 404, 'BlobNotFound'),
+  ]) {
+    const calls = [];
+    const azure = {
+      async request(_url, options) {
+        calls.push(options.method);
+        if (options.method === 'PUT') throw new AzureError('Create lifecycle blob', 409, 'BlobAlreadyExists');
+        if (result instanceof Error) throw result;
+        return result;
+      },
+    };
+    await assert.rejects(new StateStore(azure, FOUNDATION.stateUrl).initialize());
+    assert.deepEqual(calls, ['PUT', 'GET']);
+  }
 });
 
 test('long operations renew a finite lease; losing it aborts further mutations', async () => {

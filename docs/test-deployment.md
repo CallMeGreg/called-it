@@ -155,6 +155,8 @@ The helper explicitly supplies `location=eastus2` and `workloadLocation=centralu
 to Bicep. It retries the deployment **before** requiring outputs, reads outputs only
 after success, preserves the existing budget start, and creates state with
 `If-None-Match: *`. An existing schema-v2 state blob is read/validated, never reset.
+Both Azure's 412 response and its specific 409 `BlobAlreadyExists` response require
+that reread; other conflicts or unreadable/invalid state fail bootstrap.
 Missing outputs are not replaced with guessed values.
 
 Require the complete bootstrap, dependent RBAC/budget and blob initialization to

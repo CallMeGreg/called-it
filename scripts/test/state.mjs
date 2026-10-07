@@ -147,11 +147,16 @@ export class StateStore {
   }
 
   async initialize() {
-    const result = await this.request('PUT', {
-      headers: { 'If-None-Match': '*', 'x-ms-blob-type': 'BlockBlob' },
-      body: idleState(), allowed: [201, 412],
-    });
-    if (result.status === 412) await this.read();
+    try {
+      const result = await this.request('PUT', {
+        headers: { 'If-None-Match': '*', 'x-ms-blob-type': 'BlockBlob' },
+        body: idleState(), allowed: [201, 412],
+      });
+      if (result.status === 201) return;
+    } catch (error) {
+      if (!(error instanceof AzureError && error.status === 409 && error.code === 'BlobAlreadyExists')) throw error;
+    }
+    await this.read();
   }
 
   async locked(operation) {
