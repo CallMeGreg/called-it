@@ -11,6 +11,35 @@ const submission = pendingSubmission(state);
 const observedAt = new Date(TEST_NOW.getTime() + 60_000);
 const activityPath = `/subscriptions/${CONFIG.subscriptionId}/providers/Microsoft.Insights/eventtypes/management/values`;
 
+test('response and Activity paths accept the exact short and full native rejection diagnostics', () => {
+  const short = `The 'location' property is not allowed for 'called-it-test-${RUN_ID}' at resource group scope.`;
+  const full = `${short} Please see https://aka.ms/deploy-to-subscription for usage details.`;
+  assert.equal(rejectedStackResponse(state.stackId).body.error.message, full);
+  for (const message of [short, full]) {
+    const response = rejectedStackResponse(state.stackId);
+    response.body.error.message = message;
+    assert.equal(responseRejection(response, state.stackId, submission, observedAt).source, 'response');
+    const event = rejectionEvent(state);
+    event.properties.statusMessage = JSON.stringify(response.body);
+    assert.equal(activityRejection(event, state, submission, EVENT_ID, observedAt).source, 'activity-log');
+  }
+});
+
+test('response and Activity paths reject unknown suffixes on either recognized diagnostic', () => {
+  const short = `The 'location' property is not allowed for 'called-it-test-${RUN_ID}' at resource group scope.`;
+  const full = `${short} Please see https://aka.ms/deploy-to-subscription for usage details.`;
+  for (const prefix of [short, full]) {
+    for (const suffix of [' ', '\n', ' Additional diagnostic.', ' Please see https://aka.ms/other-page for usage details.']) {
+      const response = rejectedStackResponse(state.stackId);
+      response.body.error.message = `${prefix}${suffix}`;
+      assert.equal(responseRejection(response, state.stackId, submission, observedAt), null);
+      const event = rejectionEvent(state);
+      event.properties.statusMessage = JSON.stringify(response.body);
+      assert.throws(() => activityRejection(event, state, submission, EVENT_ID, observedAt), /not the allowed/);
+    }
+  }
+});
+
 test('a direct receipt admits only the exact native 400 pre-execution rejection and stores no raw response', () => {
   const response = rejectedStackResponse(state.stackId);
   const evidence = responseRejection(response, state.stackId, submission, observedAt);

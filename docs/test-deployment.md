@@ -369,8 +369,11 @@ associated-generation checks.
 
 One narrowly recognized **pre-execution rejection** is also terminal failure:
 HTTP 400, `InvalidDeployment`, and the exact message that top-level `location` is
-not allowed for this exact stack name at resource-group scope. A direct response
-is reduced to a sanitized receipt and persisted under the same lease. Error bodies,
+not allowed for this exact stack name at resource-group scope. Only the exact short
+message or that message plus the fixed suffix
+` Please see https://aka.ms/deploy-to-subscription for usage details.` is accepted;
+unknown suffixes are refused. A direct response is reduced to a sanitized receipt
+and persisted under the same lease. Error bodies,
 credentials and arbitrary messages are not stored. All other 400/500 errors,
 timeouts and cancellations remain unresolved; `InvalidDeployment` by itself is
 not sufficient evidence.

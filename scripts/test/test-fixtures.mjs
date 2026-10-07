@@ -14,7 +14,7 @@ export const RUN_GROUP = {
 export function rejectedStackResponse(stackId) {
   return { status: 400, headers: new Headers(), body: { error: {
     code: 'InvalidDeployment',
-    message: `The 'location' property is not allowed for '${stackId.split('/').at(-1)}' at resource group scope.`,
+    message: `The 'location' property is not allowed for '${stackId.split('/').at(-1)}' at resource group scope. Please see https://aka.ms/deploy-to-subscription for usage details.`,
   } } };
 }
 

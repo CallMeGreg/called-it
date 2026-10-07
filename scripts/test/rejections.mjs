@@ -13,8 +13,10 @@ export function assertRecoveryIds(submissionId, eventDataId) {
 }
 
 function knownRejection(error, stackId) {
+  const message = `The 'location' property is not allowed for '${stackId.split('/').at(-1)}' at resource group scope.`;
   return error?.code === rule.code
-    && error.message === `The 'location' property is not allowed for '${stackId.split('/').at(-1)}' at resource group scope.`;
+    && (error.message === message
+      || error.message === `${message} Please see https://aka.ms/deploy-to-subscription for usage details.`);
 }
 
 function receipt(stackId, submission, source, now) {
