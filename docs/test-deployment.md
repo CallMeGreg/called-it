@@ -1,5 +1,15 @@
 # On-demand Azure TEST
 
+> **Local-first development:** cloud testing was discontinued at the operator's request
+> on October 7, 2026, in favor of a browser-only UI playground. Use
+> [`npm run playground`](../clients/mobile/README.md) from `clients/mobile`; it needs no
+> Azure resources or invites. The instructions below are retained for a future,
+> explicitly approved cloud deployment, not as prerequisites for local development.
+> The TEST GitHub identity variable has been removed. Full removal, unlike normal Stop,
+> deletes retained SQL data, keys, and the controller. Azure enforces seven-day soft-delete
+> retention for the purge-protected vault; a deleted vault name cannot be freshly reused
+> during that period without an explicit recovery decision.
+
 TEST is an invite-only phone-browser POC, not a production deployment or a native app
 distribution. One Container App serves the Expo React Native web export and .NET 10 API
 at the same HTTPS origin. Rounds use shared, simulated questions/results and a

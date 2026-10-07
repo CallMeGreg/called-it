@@ -8,13 +8,13 @@ This repository contains the **.NET 10 backend**, **Bicep IaC**, **GitHub Action
 and a shared **Expo React Native client**, initially served as mobile web alongside the API.
 The original SwiftUI scaffold and shared OpenAPI contract remain available.
 
-**Phone-playable TEST:** invite-only, simulated shared two-minute rounds, with explicit
-Start/Stop and four-hour automatic expiry. Accounts/results survive Stop in private Azure SQL;
-disposable compute/network/registry resources do not. SQL and disposable workloads use
-**Central US**; existing keys, identities, and shutdown controls remain in **East US 2**.
-Budget roughly **$6-7/month while Off**, before shared grants, plus usage during tests.
-Follow [the TEST deployment runbook](docs/test-deployment.md);
-the full daily-game dev/prod architecture below is not the TEST resource footprint.
+**Local UI playground:** explore the shared Play, Results, and Boards screens with demo data,
+fast-forward controls, and outcomes you choose. No Azure, backend server, or invite is required.
+Start with the [local playground quickstart](#ui-playground-no-backend).
+
+Cloud hosting is optional, not part of the local playground. The
+[Azure TEST runbook](docs/test-deployment.md) remains a reference for a future, explicitly
+requested deployment; the full daily-game dev/prod architecture below is separate.
 
 ---
 
@@ -126,6 +126,26 @@ called-it/
 
 ## Local development
 
+### UI playground (no backend)
+
+Use Node 24 LTS and run:
+
+```bash
+cd clients/mobile
+npm ci
+npm run playground
+```
+
+Open the loopback web address printed by the command. The local admin controls let you advance
+the clock, lock a round, choose each question's outcome, and publish results without waiting
+for a real round to finish. Use the existing player screens to see saved picks, results,
+streaks, lifetime scores, and leaderboards change. Reset the demo to start over.
+
+Playground data is local and separate from real accounts. This is an explicit web-development
+mode; ordinary client commands and release exports retain their API-connected behavior.
+See [`clients/mobile/README.md`](clients/mobile/README.md) for controls and local-data details.
+The .NET instructions below are only needed when developing the real backend.
+
 ### Prerequisites
 
 - **.NET 10 SDK** (`dotnet --version` ≥ 10.0).
@@ -196,6 +216,9 @@ Category codes are `sports`, `finance`, `pop_culture`. The full API surface is d
 ---
 
 ## Admin guide
+
+The local playground has its own browser-only controls. The endpoints below belong to the
+real backend and are not needed to fast-forward or choose outcomes in the playground.
 
 Admin-only endpoints live under `/api/admin` and require the `Admin` role (JWT claim). An account
 becomes admin when its phone number is listed in `Game:AdminBootstrapPhones` (config/env) — dev seeds
