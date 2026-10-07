@@ -45,6 +45,7 @@ public sealed class ExceptionHandlingMiddleware
         ConflictException => StatusCodes.Status409Conflict,
         SubmissionLockedException => StatusCodes.Status423Locked,
         TooManyRequestsException => StatusCodes.Status429TooManyRequests,
+        FeatureUnavailableException => StatusCodes.Status503ServiceUnavailable,
         _ => StatusCodes.Status400BadRequest,
     };
 
@@ -56,6 +57,7 @@ public sealed class ExceptionHandlingMiddleware
         ConflictException => "Conflict",
         SubmissionLockedException => "Submission window closed",
         TooManyRequestsException => "Too many requests",
+        FeatureUnavailableException => "Feature unavailable",
         _ => "Request error",
     };
 

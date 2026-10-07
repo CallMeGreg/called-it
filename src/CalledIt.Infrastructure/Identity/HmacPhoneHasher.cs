@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using CalledIt.Application.Abstractions;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace CalledIt.Infrastructure.Identity;
@@ -11,14 +10,12 @@ public sealed class HmacPhoneHasher : IPhoneHasher
 {
     private readonly byte[] _pepper;
 
-    public HmacPhoneHasher(IOptions<ContactsOptions> options, ILogger<HmacPhoneHasher> logger)
+    public HmacPhoneHasher(IOptions<ContactsOptions> options)
     {
         var pepper = options.Value.Pepper;
         if (string.IsNullOrWhiteSpace(pepper))
         {
-            // Dev fallback so the app runs locally; never rely on this in production.
-            pepper = "dev-only-insecure-pepper-change-me";
-            logger.LogWarning("Contacts:Pepper is not configured — using an insecure dev pepper.");
+            throw new InvalidOperationException("Contacts:Pepper must be configured as a server-held secret.");
         }
 
         _pepper = Encoding.UTF8.GetBytes(pepper);

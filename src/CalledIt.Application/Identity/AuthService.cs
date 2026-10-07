@@ -45,6 +45,7 @@ public sealed class AuthService
     /// <summary>Generate + send a one-time passcode for the given phone number.</summary>
     public async Task RequestOtpAsync(RequestOtpCommand cmd, CancellationToken ct = default)
     {
+        RequirePhoneVerification();
         var phone = NormalizePhone(cmd.PhoneE164);
 
         await EnforceOtpSendLimitsAsync(phone, ct);
@@ -102,6 +103,7 @@ public sealed class AuthService
 
     public async Task<AuthResult> RegisterOrLoginAsync(RegisterOrLoginCommand cmd, CancellationToken ct = default)
     {
+        RequirePhoneVerification();
         var phone = NormalizePhone(cmd.PhoneE164);
 
         await VerifyOtpAsync(phone, cmd.Code, ct);
@@ -195,31 +197,29 @@ public sealed class AuthService
     private async Task<User> ResolveOrCreateUserAsync(
         string phone, SocialIdentity social, string? displayName, CancellationToken ct)
     {
-        var phoneHash = _phoneHasher.Hash(phone);
-
         var user = await _db.Users.FirstOrDefaultAsync(u => u.PhoneE164 == phone, ct);
+        var identity = await _db.FederatedIdentities.SingleOrDefaultAsync(
+            f => f.Provider == social.Provider && f.Subject == social.Subject, ct);
+
+        // SQL collations may ignore case or trailing spaces; provider subjects are exact identifiers.
+        if ((user is null && identity is not null)
+            || (user is not null && (identity is null || identity.UserId != user.Id
+                || !string.Equals(identity.Subject, social.Subject, StringComparison.Ordinal))))
+        {
+            throw new ForbiddenException("The phone and social identity do not match a linked account.");
+        }
+
         if (user is null)
         {
             user = new User
             {
                 PhoneE164 = phone,
-                PhoneHash = phoneHash,
+                PhoneHash = _phoneHasher.Hash(phone),
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Player" : displayName!.Trim(),
                 IsAdmin = _game.AdminBootstrapPhones.Contains(phone),
                 CreatedAt = _clock.UtcNow,
             };
             _db.Users.Add(user);
-        }
-        else if (!string.IsNullOrWhiteSpace(displayName))
-        {
-            user.DisplayName = displayName!.Trim();
-        }
-
-        // Ensure the federated identity is linked (idempotent on provider+subject).
-        var linked = await _db.FederatedIdentities.AnyAsync(
-            f => f.Provider == social.Provider && f.Subject == social.Subject, ct);
-        if (!linked)
-        {
             _db.FederatedIdentities.Add(new FederatedIdentity
             {
                 UserId = user.Id,
@@ -228,9 +228,21 @@ public sealed class AuthService
                 CreatedAt = _clock.UtcNow,
             });
         }
+        else if (!string.IsNullOrWhiteSpace(displayName))
+        {
+            user.DisplayName = displayName!.Trim();
+        }
 
         await _db.SaveChangesAsync(ct);
         return user;
+    }
+
+    private void RequirePhoneVerification()
+    {
+        if (!_sms.IsEnabled)
+        {
+            throw new FeatureUnavailableException("Phone verification is currently unavailable.");
+        }
     }
 
     private async Task<AuthResult> IssueAsync(User user, CancellationToken ct, RefreshToken? replacedFrom = null)

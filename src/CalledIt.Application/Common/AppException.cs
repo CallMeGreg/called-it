@@ -26,6 +26,11 @@ public sealed class ConflictException : AppException
     public ConflictException(string message) : base(message) { }
 }
 
+public sealed class FeatureUnavailableException : AppException
+{
+    public FeatureUnavailableException(string message) : base(message) { }
+}
+
 /// <summary>Thrown when a guess is submitted or changed after the daily set's hard lock.</summary>
 public sealed class SubmissionLockedException : AppException
 {

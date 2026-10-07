@@ -1,25 +1,19 @@
 using CalledIt.Application.Abstractions;
 using CalledIt.Application.Common;
 using CalledIt.Domain;
-using CalledIt.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace CalledIt.Application.Scoring;
 
 /// <summary>
-/// Reads the ranked boards from the leaderboard store and decorates them with display names.
-/// Friends boards rank the caller's friends (plus themselves) within the same global board.
+/// Ranks persisted score/streak projections in the database. Friends boards include accepted
+/// friends and the caller; ties have deterministic display order and retain ordinal ranks.
 /// </summary>
 public sealed class LeaderboardService
 {
     private readonly IAppDbContext _db;
-    private readonly ILeaderboardStore _boards;
 
-    public LeaderboardService(IAppDbContext db, ILeaderboardStore boards)
-    {
-        _db = db;
-        _boards = boards;
-    }
+    public LeaderboardService(IAppDbContext db) => _db = db;
 
     public async Task<LeaderboardResult> GetAsync(
         BoardType type,
@@ -29,57 +23,62 @@ public sealed class LeaderboardService
         int count = 50,
         CancellationToken ct = default)
     {
-        var boardKey = ResolveKey(type, categoryCode);
-
-        IReadOnlyList<LeaderboardEntry> entries;
-        if (scope == BoardScope.Global)
+        if (!Enum.IsDefined(scope))
         {
-            entries = await _boards.TopAsync(boardKey, count, ct);
+            throw new ValidationException("Unknown board scope.");
         }
-        else
+        if (count is < 1 or > 100)
         {
-            var members = await FriendMembersAsync(currentUserId, ct);
-            entries = await _boards.SubsetAsync(boardKey, members, ct);
-            entries = entries.Take(count).ToList();
+            throw new ValidationException("Leaderboard count must be between 1 and 100.");
         }
 
-        var ids = entries
-            .Select(e => Guid.TryParse(e.Member, out var g) ? g : (Guid?)null)
-            .Where(g => g is not null)
-            .Select(g => g!.Value)
-            .ToList();
-
-        var names = await _db.Users
-            .Where(u => ids.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
-
-        var rows = new List<LeaderboardRow>();
-        foreach (var e in entries)
+        if (type is BoardType.CategoryStreak or BoardType.CategoryBestStreak)
         {
-            if (!Guid.TryParse(e.Member, out var uid))
-            {
-                continue;
-            }
-
-            rows.Add(new LeaderboardRow(
-                e.Rank,
-                uid,
-                names.TryGetValue(uid, out var name) ? name : "Player",
-                e.Score,
-                uid == currentUserId));
+            RequireCategory(categoryCode);
         }
+        else if (categoryCode is not null)
+        {
+            throw new ValidationException("Category must be omitted for an overall or total-score board.");
+        }
+
+        IQueryable<BoardValue> values = type switch
+        {
+            BoardType.CategoryStreak => _db.Streaks.AsNoTracking()
+                .Where(s => s.CategoryCode == categoryCode)
+                .Select(s => new BoardValue { UserId = s.UserId, Value = s.Current }),
+            BoardType.CategoryBestStreak => _db.Streaks.AsNoTracking()
+                .Where(s => s.CategoryCode == categoryCode)
+                .Select(s => new BoardValue { UserId = s.UserId, Value = s.Best }),
+            BoardType.OverallStreak => _db.Streaks.AsNoTracking()
+                .GroupBy(s => s.UserId)
+                .Select(g => new BoardValue { UserId = g.Key, Value = g.Sum(s => s.Current) }),
+            BoardType.TotalScore => _db.Scores.AsNoTracking()
+                .GroupBy(s => s.UserId)
+                .Select(g => new BoardValue { UserId = g.Key, Value = g.Sum(s => s.TotalCorrect) }),
+            _ => throw new ValidationException("Unknown board type."),
+        };
+
+        var query = from value in values
+                    join user in _db.Users.AsNoTracking() on value.UserId equals user.Id
+                    select new { value.UserId, user.DisplayName, value.Value };
+
+        if (scope == BoardScope.Friends)
+        {
+            query = query.Where(row => row.UserId == currentUserId || _db.Friendships.Any(f =>
+                f.Status == FriendshipStatus.Accepted
+                && ((f.RequesterId == currentUserId && f.AddresseeId == row.UserId)
+                    || (f.AddresseeId == currentUserId && f.RequesterId == row.UserId))));
+        }
+
+        var entries = await query.OrderByDescending(row => row.Value)
+            .ThenBy(row => row.UserId)
+            .Take(count)
+            .ToListAsync(ct);
+        var rows = entries.Select((row, index) => new LeaderboardRow(
+            index + 1, row.UserId, row.DisplayName, row.Value, row.UserId == currentUserId)).ToList();
 
         return new LeaderboardResult(type, scope, categoryCode, rows);
     }
-
-    private static string ResolveKey(BoardType type, string? categoryCode) => type switch
-    {
-        BoardType.CategoryStreak => LeaderboardKeys.CategoryStreak(RequireCategory(categoryCode)),
-        BoardType.CategoryBestStreak => LeaderboardKeys.CategoryBestStreak(RequireCategory(categoryCode)),
-        BoardType.OverallStreak => LeaderboardKeys.OverallStreak,
-        BoardType.TotalScore => LeaderboardKeys.TotalScore,
-        _ => throw new ValidationException("Unknown board type."),
-    };
 
     private static string RequireCategory(string? categoryCode)
     {
@@ -91,14 +90,9 @@ public sealed class LeaderboardService
         return categoryCode;
     }
 
-    private async Task<List<string>> FriendMembersAsync(Guid userId, CancellationToken ct)
+    private sealed class BoardValue
     {
-        var friendIds = await _db.Friendships
-            .Where(f => f.Status == FriendshipStatus.Accepted && (f.RequesterId == userId || f.AddresseeId == userId))
-            .Select(f => f.RequesterId == userId ? f.AddresseeId : f.RequesterId)
-            .ToListAsync(ct);
-
-        friendIds.Add(userId);
-        return friendIds.Select(id => id.ToString()).Distinct().ToList();
+        public Guid UserId { get; init; }
+        public int Value { get; init; }
     }
 }

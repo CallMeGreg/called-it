@@ -6,6 +6,8 @@ namespace CalledIt.Infrastructure.Messaging;
 /// <summary>Dev SMS sender: logs the OTP instead of sending it. Never use in production.</summary>
 public sealed class DevSmsSender : ISmsSender
 {
+    public bool IsEnabled => true;
+
     private readonly ILogger<DevSmsSender> _logger;
 
     public DevSmsSender(ILogger<DevSmsSender> logger) => _logger = logger;

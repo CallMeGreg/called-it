@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 
 namespace CalledIt.Infrastructure.Messaging;
 
-/// <summary>Sends OTP SMS via Azure Communication Services.</summary>
+/// <summary>Explicitly selected legacy ACS adapter, not the default verification supplier.</summary>
 public sealed class AcsSmsSender : ISmsSender
 {
+    public bool IsEnabled => true;
+
     private readonly SmsClient _client;
     private readonly AcsOptions _options;
 
