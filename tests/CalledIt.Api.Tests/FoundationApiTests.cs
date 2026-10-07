@@ -54,22 +54,28 @@ public sealed class FoundationApiTests
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready")).StatusCode);
     }
 
-    [Fact]
-    public async Task Reachable_database_with_missing_projection_schema_is_not_ready()
+    [Theory]
+    [InlineData("Scores", "ALTER TABLE Scores RENAME TO Scores_unavailable",
+        "ALTER TABLE Scores_unavailable RENAME TO Scores")]
+    [InlineData("Guesses", "ALTER TABLE Guesses RENAME TO Guesses_unavailable",
+        "ALTER TABLE Guesses_unavailable RENAME TO Guesses")]
+    public async Task Reachable_database_with_missing_critical_schema_is_not_ready(
+        string table, string removeSchema, string restoreSchema)
     {
         using var factory = new CalledItWebAppFactory();
         using var client = factory.CreateClient();
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Scores RENAME TO Scores_unavailable");
+        await db.Database.ExecuteSqlRawAsync(removeSchema);
 
         Assert.True(await db.Database.CanConnectAsync());
         var response = await client.GetAsync("/health/ready");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-        Assert.DoesNotContain("Scores", await response.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(table, await response.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/live")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
 
-        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Scores_unavailable RENAME TO Scores");
+        await db.Database.ExecuteSqlRawAsync(restoreSchema);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready")).StatusCode);
     }
 

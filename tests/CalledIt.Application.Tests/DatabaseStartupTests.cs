@@ -63,6 +63,26 @@ public sealed class DatabaseStartupTests
         Assert.Empty(await db.ResolutionSources.ToListAsync());
     }
 
+    [Fact]
+    public async Task Missing_guesses_schema_blocks_production_startup_until_restored()
+    {
+        using var app = new TestApp();
+        await app.ScopedAsync(async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE Guesses RENAME TO Guesses_unavailable");
+            Assert.True(await db.Database.CanConnectAsync());
+
+            var startup = Startup(db, new TestHostEnvironment(Environments.Production));
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => startup.PrepareAsync());
+            Assert.Contains("separate migrator/bootstrap identity", error.Message);
+            Assert.Empty(db.ChangeTracker.Entries());
+
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE Guesses_unavailable RENAME TO Guesses");
+            await startup.PrepareAsync();
+        });
+    }
+
     private static DatabaseStartup Startup(AppDbContext db, TestHostEnvironment environment) =>
         new(environment, new DbInitializer(db, Options.Create(new GameOptions()), environment),
             new DatabaseReadiness(db, NullLogger<DatabaseReadiness>.Instance));

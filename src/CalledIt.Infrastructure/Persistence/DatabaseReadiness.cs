@@ -39,6 +39,7 @@ public sealed class DatabaseReadiness
             await _db.Questions.AsNoTracking().OrderBy(q => q.Id).Take(1).ToListAsync(timeout.Token);
             await _db.DailySets.AsNoTracking().OrderBy(s => s.Id).Take(1).ToListAsync(timeout.Token);
             await _db.DailySetItems.AsNoTracking().OrderBy(i => i.Id).Take(1).ToListAsync(timeout.Token);
+            await _db.Guesses.AsNoTracking().OrderBy(g => g.Id).Take(1).ToListAsync(timeout.Token);
             await _db.Scores.AsNoTracking().OrderBy(s => s.Id).Take(1).ToListAsync(timeout.Token);
             await _db.Streaks.AsNoTracking().OrderBy(s => s.Id).Take(1).ToListAsync(timeout.Token);
             await _db.Friendships.AsNoTracking().OrderBy(f => f.Id).Take(1).ToListAsync(timeout.Token);
