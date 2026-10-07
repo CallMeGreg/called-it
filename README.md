@@ -245,5 +245,18 @@ starting point, not yet a compiled app (this environment has no Xcode). See
 
 ## License
 
-See [`LICENSE`](LICENSE).
+Copyright (c) 2026 CallMeGreg.
 
+Called It is licensed under the **GNU Affero General Public License, version 3 only**
+(`AGPL-3.0-only`). You may use, redistribute, and modify it under those terms.
+See [`LICENSE`](LICENSE) for the complete license, including its warranty disclaimer.
+
+Reuse, including commercial reuse, is permitted subject to the license, not prohibited.
+When distributing covered copies, you must preserve required copyright and license notices,
+identify changes in modified versions, and meet the license's source-code and copyleft
+requirements. If you modify the software and users interact with that version over a network,
+you must prominently offer those users its Corresponding Source at no charge, as required by
+Section 13.
+
+This change does not revoke MIT permissions for versions previously released under MIT.
+Third-party components remain governed by their respective licenses.
