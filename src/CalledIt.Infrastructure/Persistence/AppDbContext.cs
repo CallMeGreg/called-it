@@ -60,6 +60,10 @@ public sealed class AppDbContext : DbContext, IAppDbContext
         {
             e.HasIndex(x => new { x.Provider, x.Subject }).IsUnique();
             e.Property(x => x.Subject).HasMaxLength(256).IsRequired();
+            if (!_isSqlite)
+            {
+                e.Property(x => x.Subject).UseCollation("Latin1_General_100_BIN2");
+            }
             e.HasOne(x => x.User).WithMany(u => u.Identities).HasForeignKey(x => x.UserId);
         });
 

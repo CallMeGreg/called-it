@@ -55,9 +55,11 @@ longer a required component, but outcome-to-score durable replay, chronological
 finality, projection versioning and shared tied ranks are still outstanding.
 
 Readiness now probes core mapped database tables/seeds separately from liveness.
-It is not a proof that every endpoint works, that the migrator is implemented,
-that runtime write grants are correct, or that SQL Server load/concurrency has
-been validated. The remaining P0 release gates above still block public beta.
+It is not proof that every endpoint works or that deployed runtime grants and
+SQL Server load/concurrency are correct. The separate [SQL lifecycle lane](database-lifecycle.md)
+now covers migrations, category seeding, bounded constraint races and effective
+contained-user permissions; Azure identity/network and full gameplay concurrency
+remain unverified. The remaining P0 release gates above still block public beta.
 
 ### Disposition after the first infrastructure slice
 
