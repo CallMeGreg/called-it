@@ -16,10 +16,24 @@ the earlier "locked decisions" and "fully implemented" claims.
 | Verification supplier | A managed phone-verification supplier outside Azure is acceptable. Do not establish a new dependency on retiring ACS SMS. |
 | Earlier work | Preserve unmerged prototype branches as reference; do not consolidate or deploy them automatically. |
 
-**Not yet approved:** exact launch countries/ages, drop time/window duration,
-season and achievement rules, contact discovery, SMS vendor, data suppliers,
-Azure region/SKU, and outage compensation policy. Recommendations below are
-explicitly proposals, not user commitments or implemented features.
+### Owner decisions recorded on 2026-10-08
+
+These decisions supersede conflicting prototype rules and earlier proposals.
+They are specifications, **not a claim that the running code implements them**.
+
+| Area | Approved decision / remaining boundary |
+| --- | --- |
+| D1 audience | United States and Canada, English only. No additional product-imposed age floor; actual app-store requirements, legal age/consent rules and Canadian language requirements remain to be established. D1 is still partial. |
+| D2 schedule | One surprise daily opening between 12:00 and 17:00 Eastern, open for one hour; latest close 18:00. Keep the chosen time hidden until opening. Encourage optional notifications and notify opted-in players when live. Lock at least 30 minutes before the earliest event/information cutoff. Actual content-calendar validation remains open. |
+| D3 competition | One question per category per day; one point per correct pick. Skip and no accepted choice are neutral. Separate global and category streaks; any wrong pick resets its category and that day's global streak, not the other categories. Lifetime-only beta boards with shared competition ranks; seasons deferred. [Full rules and achievement catalog](product.md) are ratified. |
+| D3 finality | Settle automatically when the approved source marks a result final. At 48 hours after lock, unresolved questions become neutral voids; a later final result revives them through correction/replay. Verified corrections have no arbitrary age limit. |
+| D4 discovery | Invite links only for beta. Defer contact upload and phone matching; verification does not imply discoverability. Decision complete, implementation still pending. |
+| D8 operations | Round-wide neutral void, no same-day replacement, after 10 cumulative minutes of confirmed service-wide submission outage or 2 continuous minutes within the final 5 minutes. CallMeGreg is incident owner; support is best effort with no guaranteed staffed hours. Numerical recovery targets are deferred until capabilities and costs are measured, so D8 remains partial. |
+
+**Still unresolved:** the remaining D1/D2/D8 boundaries above, identity/SMS vendor,
+licensed data suppliers, Azure region/SKUs, native/privacy/store readiness and
+actual operational capacity. Other recommendations are proposals unless marked
+approved; none of these decisions authorizes provisioning or release.
 
 ## Read by decision
 

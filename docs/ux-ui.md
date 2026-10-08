@@ -2,6 +2,8 @@
 
 Status: proposed design for the approved React Native/Expo client. The existing
 SwiftUI code is a non-shipping reference, not a finished interaction specification.
+The 2026-10-08 [owner-approved rules](product.md) constrain this design; none of
+these screens is implied to be implemented.
 
 ## Information architecture
 
@@ -11,8 +13,8 @@ a hidden consumer-app toggle.
 
 | Destination | Primary content |
 | --- | --- |
-| Today | Current round, drop/lock state, three choices, save receipt, recent pending/results, next drop. |
-| Standings | Friends first, then season/global; category and career filters; a persistent "You" row with rank and as-of state. |
+| Today | Current round, drop/lock state, three choices, save receipt, recent pending/results, daily opening range. |
+| Standings | Friends and global lifetime boards; separate global/category streak filters; a persistent "You" row with rank and as-of state. No beta seasons. |
 | Friends | Accepted friends, pending requests, invite/share, block/report; leagues can follow the basic mutual graph. |
 | Profile | Streaks, total, achievements, history, notification preferences, privacy, linked identities, support, export/delete account. |
 
@@ -44,7 +46,7 @@ nonce handling, redirect URLs, entitlements, and review behavior are release gat
 | State | What the player sees and can do |
 | --- | --- |
 | Loading | Stable skeleton, not stale choices presented as current. |
-| Before drop | Next drop in local time; history/practice available. No future question leakage. |
+| Before drop | Show the daily noon-to-5-p.m.-Eastern opening range in local time, not the secretly drawn time or a countdown to it; history/practice remain available. |
 | Open/untouched | Three cards, common deadline, clear A/B/Skip choices, saved versus draft count. |
 | Editing | Local selection is visibly a draft; a review step lists all three choices. |
 | Saving | Disable duplicate submission; keep old accepted receipt visible; announce progress accessibly. |
@@ -53,7 +55,7 @@ nonce handling, redirect URLs, entitlements, and review behavior are release gat
 | Offline | Cached round plus an offline label; never say "saved" for a queued request. |
 | Locked/pending | Immutable receipt, expected result timing, and why an outcome is delayed. |
 | Partially resolved | Each category explicitly resolved/pending/void; provisional aggregate progress. |
-| Final | Correct/incorrect/skip/missed/void labels, source explanation, progress and optional sharing. |
+| Settled | Correct/incorrect/skip/unanswered/void labels, source explanation, progress and optional sharing. Unanswered is neutral, not a lost-streak warning. |
 | Corrected | Previous result, new result, reason, timestamp, and recalculated progression. |
 | Canceled/service incident | Neutral round explanation and next update; no punitive lost-streak copy. |
 | Empty/content unavailable | Acknowledge no round was published; no misleading network retry or missed-day penalty. |
@@ -76,6 +78,10 @@ source/rules disclosure. Avoid truncating the meaningful part of a proposition.
 Selected, saved, incorrect, and disabled are distinct states. Skip is a first-class
 choice with "preserves, does not extend" explained; it is not a tiny secondary
 escape hatch. The final review calls out any untouched category and its consequence.
+Unanswered categories also preserve streaks and earn no points, but do not count
+as accepted choices or satisfy a submission badge. Explain that a wrong pick
+resets its category and the independent global streak; other categories survive.
+Do not present the global streak as a category sum.
 
 Recommend one atomic three-choice submit/edit operation. Until the backend
 supports that contract, do not imply that three independent requests save
@@ -110,18 +116,22 @@ Group question choices meaningfully for screen readers, announce save/error
 outcomes, and never announce a ticking countdown every second. Preserve focus on
 refresh. Avoid destructive actions triggered by swipe alone.
 
-Externalize user-facing strings and pluralization from the start. Beta can be
-English-only, but format dates, numbers, and timezones locally and design for text
-expansion. Category codes are stable machine values, not display copy.
+Externalize user-facing strings and pluralization from the start. The selected
+US/Canada beta is English-only, subject to Canadian language-law review. Format
+dates, numbers, and timezones locally and design for text expansion. Category
+codes are stable machine values, not display copy.
 
 ## Healthy notifications and growth
 
 Ask for push permission after the first useful action, with an explanation and a
-"Not now" option. Keep notifications optional for all game functions.
+"Not now" option. Strongly encourage it for the surprise one-hour opening and
+notify opted-in players when live, but keep notifications optional for all game
+functions.
 
 Good reminder: "Today's calls close at 6:00 PM. You have one choice left."
-Avoid "Your streaks are at risk" as a generic broadcast to everyone, especially
-players who already finished. Respect quiet hours for the global drop too.
+Do not say "Your streaks are at risk" because an unanswered round is neutral.
+Respect quiet hours for the global drop too, and never leak the chosen time in a
+pre-drop notification.
 
 Share previews show exactly what will leave the app. No phone number, contacts,
 location, bearer token, or private league contents. Use native share sheets,

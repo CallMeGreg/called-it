@@ -28,9 +28,13 @@ mandatory **phone verification plus Apple/Google sign-in**; a shared
 no initial ads/purchases. Azure beta spending should be designed toward
 **USD 100-250/month**, excluding SMS and store accounts. This is not a price quote.
 
-Exact geography, ages, UTC schedule, season rules, SMS/data suppliers and Azure
-region/SKUs remain owner decisions. Earlier unmerged prototypes are preserved as
-reference rather than silently imported into this branch.
+Owner decisions recorded on **2026-10-08** select an English-language US/Canada
+beta, a surprise one-hour round opening between noon and 5 p.m. Eastern,
+lifetime-only boards, independent global/category streaks, and invite-link
+discovery. See the [ratified rules](docs/product.md); these are not yet implemented.
+Actual age eligibility, content-calendar validation, SMS/data suppliers, Azure
+region/SKUs and measured recovery objectives remain open. Earlier unmerged
+prototypes are preserved as reference rather than silently imported into this branch.
 
 ## Repository
 

@@ -21,7 +21,8 @@ clients/
 `shared/openapi.yaml` is useful baseline material, **not a verified complete
 contract**. Establish API-generated/drift-checked schemas and typed client generation
 before relying on it for the new client. Preserve mobile-version compatibility
-when receipt, idempotency, season and account-lifecycle endpoints are introduced.
+when receipt, idempotency, independent global-streak and account-lifecycle
+endpoints are introduced. Seasons are explicitly deferred beyond beta.
 
 ## Cross-platform requirements
 
@@ -49,7 +50,7 @@ hours, TTL, token rotation and sign-out; notification receipt never grants a pic
 
 Do **not** distribute a shared HMAC pepper to clients or call enumerable phone
 hashes private. Mandatory phone verification does not grant Contacts permission.
-Invite links are the proposed v1 discovery mechanism; contact matching needs an
+Invite links are the approved beta discovery mechanism; contact matching needs an
 explicit later decision, opt-in, threat model, abuse limits and retention policy.
 
 ## Native release gates

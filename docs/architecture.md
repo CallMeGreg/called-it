@@ -56,7 +56,7 @@ shipping mobile client are **planned**, not established by this diagram.
 | Identity | User, linked identities, verification transactions, sessions, account lifecycle | Returns a stable user ID; phone/social details never become leaderboard identifiers. |
 | Competition | Question revisions, approvals, rounds, eligibility, accepted choice revisions | Authoritative time, content and concurrency checks. |
 | Resolution | Provider adapters, typed rules, evidence, result revisions, disputes | A provider proposes evidence; validated/audited transitions own the result. |
-| Progression | Category streaks, lifetime/season scores, achievements, projection versions | Deterministic replay; immutable input revisions and explicit corrections. |
+| Progression | Independent global/category streaks, lifetime scores, achievements, projection versions; seasons deferred | Deterministic replay; immutable input revisions and explicit corrections. |
 | Social | Friend edges, blocks, invitations, leagues, reports | Checks membership/consent; no implicit access from knowing a phone. |
 | Notifications | Preferences, installations, intents, delivery attempts | At-least-once work, expiry and suppression; no game-authority role. |
 | Operations | Publication tools, audit, retention, kill switches, migration/recovery | Separate least-privilege operator authorization. |
@@ -82,12 +82,12 @@ extend deliberately rather than assume the current schema enforces the rules.
 
 | Record/invariant | Target enforcement |
 | --- | --- |
-| Competition round | Unique competition/drop identity; immutable published question membership, drop and lock; explicit canceled/final states. |
+| Competition round | Unique daily competition identity, one question per category per day; persisted random drop/lock and immutable published membership; explicit canceled/final states. |
 | Question | Versioned wording/rule/evidence metadata; safe information cutoff distinct from expected resolution time; question cannot be reused accidentally. |
 | Eligibility | First eligible round/account activation policy, not a `CreatedAt <= DropAt` approximation that excludes legitimate newcomers. |
 | Accepted choices | User/round/question uniqueness, optimistic version, database acceptance time, request idempotency key and payload fingerprint. |
 | Result revision | Immutable history, current version, actor/source/evidence/reason and correction status. |
-| Projections | User/category/season scores, current/best streaks and achievement receipts with input/checkpoint version. |
+| Projections | Lifetime points, separate global/category current/best streaks and achievement receipts with input/checkpoint version; no beta season reset. |
 | Work | Outbox/job identity, next attempt, lease owner/expiry, fencing/version, attempts and terminal/dead-letter state. |
 | Notification | Preference and installation ownership, deduplication scope, TTL, dispatch outcome distinct from handset receipt. |
 | Privacy | Erasure/tombstone records, retention classification and audit suitable for restoration/reconciliation. |
@@ -103,6 +103,13 @@ validate category completeness, question eligibility and future event cutoffs,
 fix membership/revisions, and persist a publication outbox event. Serving the
 round is gated by database time, so a delayed notification or worker cannot open
 it early or extend the lock.
+
+For the approved beta schedule, draw one opening between noon and 5 p.m. in
+`America/New_York`, then persist the resulting UTC drop and one-hour lock once.
+Retries/restarts must not redraw it. Keep the chosen time private until opening,
+and require every question's event/information cutoff to be at least 30 minutes
+after lock. The actual content calendar is still unvalidated. The old fixed UTC
+time and six-hour runtime settings must not be mistaken for the approved policy.
 
 Target an atomic submit/edit command for the three choices, with a stable request
 ID, expected accepted revision, round ID and explicit A/B/Skip entries. Validate
@@ -142,14 +149,27 @@ still exists. Retry transient failures with bounded backoff; surface unknown
 providers/permanent failures instead of silently skipping them.
 
 Incremental updates handle ordinary rounds. Corrections replay only the affected
-user/category range from a preceding checkpoint, publish a consistent projection
-generation, and restate dependent achievements/notifications. Preserve a full
+user/category and global-tracker ranges from a preceding checkpoint, publish a
+consistent projection generation, and restate dependent achievements/notifications. Preserve a full
 replay path for reconciliation. Do not synchronously load every user's entire
 history inside an administrator's HTTP outcome request.
 
 Maintain chronological streak finality through pending earlier results. Distinguish
 settled totals, provisional new points and blocked streak calculations. A shared
 projection version/as-of marker makes lag visible to clients and operators.
+
+The global account streak is a separate projection, not the sum of category
+streaks. For a daily round, any wrong pick makes it end at zero; otherwise each
+correct pick increments it once. Wrong picks reset only their own category
+trackers. Skip and no accepted choice are neutral. Do not expose an authoritative
+global record from partial results before that round can be evaluated consistently.
+
+Approved-source finality settles results automatically. At 48 hours after lock,
+an unresolved question becomes a neutral timeout void; a later source-final
+revision revives it and triggers the same bounded correction replay. Persist void
+reason so a late source result cannot revive a fairness-voided round. All verified
+corrections remain possible regardless of age and can revoke result-dependent
+awards. These transitions/outbox protocols are still implementation work.
 
 ## Leaderboards and public reads
 
@@ -158,8 +178,9 @@ personal/around-me lookup. Filter friends or league membership server-side.
 Keep phone/social identifiers out of responses and apply deletion/block rules.
 
 Preserve the existing API shape in the first foundation slice where practical;
-season qualification, shared tied ranks, cursor/as-of versions and around-me
-responses need an explicit contract revision. Choose deterministic display order,
+the independent global streak, shared competition ranks (1, 1, 3), cursor/as-of
+versions and around-me responses need an explicit contract revision. Seasons are
+deferred beyond beta. Choose deterministic display order,
 bounded counts and failure responses rather than relying on differing
 Redis/in-memory tie behavior.
 
