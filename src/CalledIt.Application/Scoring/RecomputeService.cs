@@ -1,5 +1,4 @@
 using CalledIt.Application.Abstractions;
-using CalledIt.Application.Common;
 using CalledIt.Domain.Entities;
 using CalledIt.Domain.Scoring;
 using Microsoft.EntityFrameworkCore;
@@ -15,13 +14,11 @@ public sealed class RecomputeService
 {
     private readonly IAppDbContext _db;
     private readonly IClock _clock;
-    private readonly ILeaderboardStore _boards;
 
-    public RecomputeService(IAppDbContext db, IClock clock, ILeaderboardStore boards)
+    public RecomputeService(IAppDbContext db, IClock clock)
     {
         _db = db;
         _clock = clock;
-        _boards = boards;
     }
 
     /// <summary>Recompute every player who was eligible for the given set (incl. non-participants,
@@ -79,7 +76,6 @@ public sealed class RecomputeService
         var states = StreakCalculator.Replay(history);
 
         await PersistAsync(userId, states, ct);
-        await UpdateBoardsAsync(userId, states, ct);
     }
 
     private async Task PersistAsync(Guid userId, IReadOnlyDictionary<string, CategoryState> states, CancellationToken ct)
@@ -112,19 +108,5 @@ public sealed class RecomputeService
         }
 
         await _db.SaveChangesAsync(ct);
-    }
-
-    private async Task UpdateBoardsAsync(Guid userId, IReadOnlyDictionary<string, CategoryState> states, CancellationToken ct)
-    {
-        var member = userId.ToString();
-
-        foreach (var (code, state) in states)
-        {
-            await _boards.SetScoreAsync(LeaderboardKeys.CategoryStreak(code), member, state.Current, ct);
-            await _boards.SetScoreAsync(LeaderboardKeys.CategoryBestStreak(code), member, state.Best, ct);
-        }
-
-        await _boards.SetScoreAsync(LeaderboardKeys.OverallStreak, member, StreakCalculator.OverallCurrentStreak(states), ct);
-        await _boards.SetScoreAsync(LeaderboardKeys.TotalScore, member, StreakCalculator.TotalScore(states), ct);
     }
 }

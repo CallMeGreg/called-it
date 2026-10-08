@@ -65,10 +65,10 @@ public sealed class JwtTokenService : ITokenService
 
     private string GetSigningKey()
     {
-        if (string.IsNullOrWhiteSpace(_auth.SigningKey) || _auth.SigningKey.Length < 32)
+        if (string.IsNullOrWhiteSpace(_auth.SigningKey) || Encoding.UTF8.GetByteCount(_auth.SigningKey) < 32)
         {
             throw new InvalidOperationException(
-                "Auth:SigningKey must be configured with at least 32 characters (use Key Vault in production).");
+                "Auth:SigningKey must be configured with at least 32 UTF-8 bytes.");
         }
 
         return _auth.SigningKey;

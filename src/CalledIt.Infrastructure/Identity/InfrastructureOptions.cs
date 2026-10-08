@@ -14,7 +14,7 @@ public sealed class SocialAuthOptions
     public const string SectionName = "SocialAuth";
 
     /// <summary>When true, use the fake validator (local/dev/tests). Must be false in production.</summary>
-    public bool UseFake { get; set; } = true;
+    public bool UseFake { get; set; }
 
     public string GoogleAudience { get; set; } = string.Empty;
     public string AppleAudience { get; set; } = string.Empty;

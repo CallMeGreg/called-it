@@ -8,7 +8,7 @@ public sealed class AuthOptions
     public string Issuer { get; set; } = "called-it";
     public string Audience { get; set; } = "called-it-clients";
 
-    /// <summary>Symmetric signing key for dev; production uses a Key Vault-managed key.</summary>
+    /// <summary>HS256 signing secret, at least 32 UTF-8 bytes; supplied securely outside Development.</summary>
     public string SigningKey { get; set; } = string.Empty;
 
     public int AccessTokenMinutes { get; set; } = 15;

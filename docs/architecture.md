@@ -1,322 +1,247 @@
-# "Called It" — Tech Stack & Cloud Architecture (Azure)
+# Called It architecture
 
-## 1. Goals & confirmed decisions
-Build a daily casual-forecasting app with private (friends) + global leaderboards.
+Reassessed 2026-10-07. This is the **target design and migration direction**, not a
+claim that every component below exists. See [decisions and evidence](README.md),
+[observed risks](trust-and-safety.md), and [delivery gates](delivery-plan.md).
 
-**Locked decisions**
-- **Client:** Native **iOS (Swift/SwiftUI)**.
-- **Auth:** **Phone-number = primary ID**, verified by **SMS OTP**, **plus mandatory Sign in with
-  Apple / Google** from day one (security + account recovery).
-- **Cloud:** **Azure** for all services.
-- **Backend style:** Modular monolith (ASP.NET Core) + separate background workers now; split into
-  microservices later. Clean module seams: Identity, Social, Questions, Scoring, Leaderboards,
-  Notifications.
+## Architectural decisions
 
-**MVP scope (v1)**
-- **3 binary questions per daily drop** — one each from **Sports**, **Finance**, **Pop Culture**
-  (yes/no, win/lose, over/under). **No confidence weighting** — each pick is simply right or wrong.
-- **Independent per-category streaks.** Correct **extends** that category's streak; wrong **resets**
-  it; **Skip** (**unlimited**) **protects** it for the day without extending it; **missing a day
-  altogether resets *all* streaks**.
-- **Cumulative total score** (lifetime correct answers) that **keeps tallying and never resets** —
-  even when a missed day wipes your streaks — so there's always permanent progress to chase.
-- Questions are **auto-resolvable by default**: each must map to an **API resolution source**; the
-  admin can still **manually set or amend** any result (including previously-resolved ones) via
-  audited DB writes, with streaks and totals recomputing.
+Keep a **.NET modular monolith** and a separate worker entry point. The existing
+solution builds, the domain is small, and thousands of daily users do not justify
+microservices by default. Split deployments for operational needs, not a promise
+to eventually turn every module into a service.
 
----
+Use **Azure SQL as the system of record and initial leaderboard read store**.
+Keep authoritative choices, scores, work scheduling and identity ownership durable.
+Add a cache only after profiling; Redis must be rebuildable and may never decide
+whether a late pick or duplicate reward is valid.
 
-## 2. High-level architecture
+The approved client is **React Native/Expo**, with native development/release
+builds for Apple/Google login, secure storage, attestation and APNs/FCM. Expo Go
+and browser previews are not substitutes for native integration validation.
 
-```
-                    iOS (Swift)
-                         │
-                 HTTPS (REST/JSON)
-                         │
-        ┌────────────────────────────────┐
-        │   Azure Front Door (WAF/CDN/TLS)│
-        └───────────────┬────────────────┘
-                        │
-              ┌─────────▼──────────┐   (optional) Azure API Management
-              │  Azure Container   │   – rate limiting, versioning
-              │  Apps: API service │
-              │ (ASP.NET Core)     │
-              └───┬───────┬────────┘
-      ┌───────────┘       └───────────────┐
-      ▼                                   ▼
- Azure SQL DB                     Azure Managed Redis
- (system of record)              (leaderboards, hot cache,
-      │                            OTP/rate-limit counters)
-      │
-      ├── Azure Blob + CDN (images/share cards)
-      │
-   Events/queues: Azure Service Bus + Event Grid
-      │
-      ▼
- Azure Functions / Durable Functions (background plane)
-   • Daily Set Builder (timer)         • Resolution engine (timer/event)
-   • Scoring worker                    • Leaderboard updater
-   • Notification dispatcher  ───────► Azure Notification Hubs ─► APNs
-
- Cross-cutting: Azure Communication Services (SMS OTP) · Azure OpenAI
- (question drafting) · Key Vault · App Configuration · App Insights/Monitor ·
- Container Registry · Managed Identities · GitHub Actions + Bicep IaC
+```mermaid
+flowchart TB
+    mobile["React Native / Expo<br/>iOS + Android native builds"] -->|HTTPS| api
+    links["Web: share fallback, privacy,<br/>support, deletion"] -->|HTTPS| api
+    operator["Operator UI<br/>separate privileged identity"] -->|HTTPS| api
+    subgraph azure["Azure: one regional beta deployment"]
+        api["Container Apps API<br/>modular monolith"]
+        jobs["Worker host<br/>durable polling + leases"]
+        sql[("Azure SQL<br/>records, projections, outbox")]
+        api --> sql
+        jobs --> sql
+        jobs --> push["Notification Hubs<br/>when enabled"]
+        secrets["Secret storage + managed identities"]
+        logs["Bounded logs, metrics, alerts"]
+        secrets -.-> api
+        secrets -.-> jobs
+        api -.-> logs
+        jobs -.-> logs
+    end
+    api --> verify["Managed phone verification<br/>supplier to be selected"]
+    api --> oidc["Apple / Google identity"]
+    jobs --> sources["Licensed outcome sources<br/>human evidence fallback"]
+    push --> platforms["APNs / FCM v1"]
+    platforms --> mobile
 ```
 
----
+The outbox, leased jobs, complete operator UI, new verification supplier and
+shipping mobile client are **planned**, not established by this diagram.
 
-## 3. Client architecture (native iOS)
+## Module ownership
 
-**iOS**
-- Swift, SwiftUI, async/await; MVVM.
-- Push: **APNs**. Contacts: **Contacts framework**. Social: **Sign in with Apple**
-  (AuthenticationServices) + **Google Sign-In**. Token storage: **Keychain**. Anti-abuse:
-  **App Attest / DeviceCheck**.
-- Phone normalization via libphonenumber (E.164). Universal Links for invites/deep links.
+| Module | Owns | Boundary |
+| --- | --- | --- |
+| Identity | User, linked identities, verification transactions, sessions, account lifecycle | Returns a stable user ID; phone/social details never become leaderboard identifiers. |
+| Competition | Question revisions, approvals, rounds, eligibility, accepted choice revisions | Authoritative time, content and concurrency checks. |
+| Resolution | Provider adapters, typed rules, evidence, result revisions, disputes | A provider proposes evidence; validated/audited transitions own the result. |
+| Progression | Category streaks, lifetime/season scores, achievements, projection versions | Deterministic replay; immutable input revisions and explicit corrections. |
+| Social | Friend edges, blocks, invitations, leagues, reports | Checks membership/consent; no implicit access from knowing a phone. |
+| Notifications | Preferences, installations, intents, delivery attempts | At-least-once work, expiry and suppression; no game-authority role. |
+| Operations | Publication tools, audit, retention, kill switches, migration/recovery | Separate least-privilege operator authorization. |
 
-**Client behaviors**
-- **Daily card:** 3 binary questions (Sports / Finance / Pop Culture); for each, tap a side (Yes/No,
-  Win/Lose) **or tap Skip** (protects that category's streak), then lock in before the cutoff.
-  Per-category **streak** badges are shown.
-- Offline cache of today's set; optimistic guess submit validated against a **server-authoritative
-  global lock**; a visible **countdown** to the cutoff, after which the UI locks and any edit/submit
-  is rejected.
-- Cert pinning (optional), forced-update gate via App Configuration.
+Keep domain calculations pure and infrastructure behind typed ports. Do not build
+an abstract event platform, multiple databases, or an analytics lake before a
+working daily loop and operator workflow exist.
 
----
+### Alternatives considered
 
-## 4. Identity & authentication
+| Choice | Why this direction / when to reconsider |
+| --- | --- |
+| SQL rather than a new document database | Identity ownership, rounds, accepted choices, social membership and transactional outbox work are naturally relational. A different store does not remove cross-record correctness requirements. |
+| Container Apps rather than rewriting all HTTP/work as Functions | Retains the small working .NET host and predictable warm API. Scheduled/event-driven jobs can follow once durable claims and catch-up exist. |
+| Shared native client rather than two independent apps | Owner-selected iteration speed and consistent behavior across stores; keep native integration and accessibility work explicit. |
+| SQL projections rather than Redis-first ranking | Avoids a second mandatory state system and its baseline cost. Reconsider after production-like query/peak-load evidence. |
+| Managed identity platform versus managed verification only | Still open. Entra External ID browser-delegated social login plus SMS MFA is a candidate; a verification-only vendor leaves linking, sessions and recovery with this app. Prove the full required flow before choosing. |
 
-**Model:** one `User` anchored by a **verified phone** (the social-graph key) with **linked
-federated identities** (Apple, Google). Both a phone AND at least one social provider are required.
+## Authoritative persistence
 
-**Flows**
-1. **Register/Login:** enter phone → ACS sends OTP → verify → then complete/link **Sign in with
-   Apple or Google** (validate the OIDC `id_token` server-side against Apple/Google JWKS) → link to
-   the user record.
-2. **Token issuance:** service issues short-lived **JWT access token** (~15 min) + **rotating
-   refresh token** (reuse detection, revocation list in Redis).
-3. **Recovery:** lost number → re-verify via linked Apple/Google; new number → re-verify OTP.
+Retain existing User, Question, DailySet, Guess, Streak and Score concepts, but
+extend deliberately rather than assume the current schema enforces the rules.
 
-**Hardening:** OTP rate-limits + throttling (Redis) gated by App Attest/DeviceCheck; signing
-keys in **Key Vault**; per-device sessions; account-deletion + data-export endpoints (GDPR/CCPA).
+| Record/invariant | Target enforcement |
+| --- | --- |
+| Competition round | Unique competition/drop identity; immutable published question membership, drop and lock; explicit canceled/final states. |
+| Question | Versioned wording/rule/evidence metadata; safe information cutoff distinct from expected resolution time; question cannot be reused accidentally. |
+| Eligibility | First eligible round/account activation policy, not a `CreatedAt <= DropAt` approximation that excludes legitimate newcomers. |
+| Accepted choices | User/round/question uniqueness, optimistic version, database acceptance time, request idempotency key and payload fingerprint. |
+| Result revision | Immutable history, current version, actor/source/evidence/reason and correction status. |
+| Projections | User/category/season scores, current/best streaks and achievement receipts with input/checkpoint version. |
+| Work | Outbox/job identity, next attempt, lease owner/expiry, fencing/version, attempts and terminal/dead-letter state. |
+| Notification | Preference and installation ownership, deduplication scope, TTL, dispatch outcome distinct from handset receipt. |
+| Privacy | Erasure/tombstone records, retention classification and audit suitable for restoration/reconciliation. |
 
-> Managed alternative if you later prefer not to own auth: **Microsoft Entra External ID** (CIAM)
-> supports phone OTP + Apple/Google. We're going custom for the cleanest phone-as-ID + contact model.
+Add unique constraints, foreign keys, checks and indexes for the real invariants.
+Check SQL Server cascade/index behavior and datetime/concurrency semantics
+explicitly; SQLite tests alone cannot validate production correctness.
 
----
+## Publication and acceptance
 
-## 5. Data stores
-- **Azure SQL Database** — system of record: users, identities, devices, friendships, leagues,
-  questions, categories, daily sets, guesses, scores, resolution sources, audit.
-- **Azure Managed Redis** — real-time **leaderboards (Sorted Sets)**, hot cache (today's set),
-  OTP/rate-limit counters, refresh-token revocation, contact-match acceleration.
-- **Azure Blob Storage + Front Door/CDN** — question media, category icons, generated share-card
-  images.
-- (Later) **Azure AI Search** for admin question-bank search; **Azure Data Lake/Fabric** for analytics.
+Prebuild and review rounds before drop. Publishing a round is a transaction:
+validate category completeness, question eligibility and future event cutoffs,
+fix membership/revisions, and persist a publication outbox event. Serving the
+round is gated by database time, so a delayed notification or worker cannot open
+it early or extend the lock.
 
----
+Target an atomic submit/edit command for the three choices, with a stable request
+ID, expected accepted revision, round ID and explicit A/B/Skip entries. Validate
+authenticated ownership, account eligibility, round state, question membership,
+valid enum values and cutoff in the **same authoritative write transaction**.
+Use a database-side conditional write/serialization strategy with concurrency
+tests, not an application-clock check followed later by an unconditional save.
 
-## 6. Question lifecycle (creation → distribution → resolution → scoring)
+A retry with the same request ID and payload returns the original receipt. Reusing
+it for different choices is a conflict. A stale revision is a conflict, not
+last-writer-wins from a delayed device. A post-lock request without a previous
+receipt fails even if the client claims it was sent earlier.
 
-**6a. Creation (binary + auto-resolvable by default)**
-- **Answer type:** **binary** (yes/no, win/lose, over/under) for v1. **MVP categories: Sports,
-  Finance, Pop Culture** — one question each per drop (broader categories are a post-MVP expansion).
-- **Auto-resolvable-by-default rule:** every question **must declare a machine-readable
-  `resolution_source` + `resolution_rule`** (an API that can confirm the outcome); the Admin app
-  **blocks publishing** a question without one by default.
-- **Question bank** in SQL, each tagged: `category`, `answer_type`, difficulty, region,
-  `resolution_source`, `resolution_rule`, per-question `resolves_at`. Submission window is set-level
-  and global (see 6b): `DailySet.drop_at` and `DailySet.locks_at = drop_at + 6h`.
-- **Authoring channels:** (1) internal **Admin web app** (Azure Static Web Apps / Container Apps) —
-  proposes questions preferring **API-validatable** ones and requiring a resolution source; (2)
-  **Azure OpenAI** drafts candidates **with a suggested resolution source** across Sports/Finance/Pop
-  Culture → human review queue; (3) **community submissions** → moderation queue.
+Document the database acceptance point precisely: queues and client send times
+do not establish eligibility. Exercise transactions that stall across the lock;
+select the SQL isolation/locking strategy based on those tests. Do not promise
+zero-boundary races from unit tests of `IsOpenAt` alone.
 
-**6b. Distribution — one synchronized global drop**
-- **Daily Set Builder** = Azure Functions **timer trigger**: at a **fixed daily UTC time** selects
-  **exactly 3 questions — one Sports, one Finance, one Pop Culture** (each API-validatable) and
-  publishes **one global set simultaneously to all users worldwide** (SQL write + warm Redis).
-- **Global submission window:** `drop_at` → `locks_at = drop_at + 6 hours`. Everyone gets the exact
-  same questions and the exact same 6-hour window.
-- **Hard cutoff:** at `locks_at` the API **rejects any new or changed guess** using a
-  server-authoritative clock (late/offline submissions are dropped). Nothing can be submitted or
-  edited afterward.
-- Fires a single **global "questions are live" broadcast** at `drop_at` and a **"window closing"
-  reminder** before `locks_at`.
+The proposed acceptance point is the serialized, guarded database mutation, not
+HTTP response arrival. Acquire the necessary write concurrency rights before
+evaluating the authoritative cutoff; a timestamp captured before waiting on a
+lock is insufficient. A previously accepted receipt may arrive or be retried after
+lock, but an unaccepted queued command cannot claim that receipt.
 
-**6c. Resolution (how guesses get confirmed/denied — no app update needed; it's data)**
-- **Automated by default:** Azure Functions triggered at each `resolves_at` call the question's
-  external **data API** (sports scores, market data, entertainment sources), apply `resolution_rule`,
-  and write `outcome` (YES/NO/VOID) with `outcome_source = auto`.
-- **Admin override & amend:** the Admin app can **manually set a result**, or **change a
-  previously-set result**, via audited **database writes** (`outcome_source = manual`, `resolved_by`,
-  reason) — for when an API is wrong/unavailable or a call is disputed.
-- **Re-scoring on any change:** setting or amending an outcome emits `QuestionResolved` /
-  `OutcomeAmended`; scoring + leaderboards **idempotently recompute** for that question, so a
-  corrected result cleanly restates scores. Every change is written to `AuditLog`.
-- All resolution/override actions are **data writes — no app deployment**.
+## Durable scheduling and progression
 
-**6d. Scoring — per-category streaks (no confidence)**
-- Answers are **pure binary**; each category (Sports / Finance / Pop Culture) keeps an **independent
-  streak** (current + best).
-- The **Streak worker** consumes `QuestionResolved` / `OutcomeAmended` and updates per-category state:
-  - **Correct →** current streak **+1** (update best) **and total score +1**.
-  - **Wrong →** current streak **resets to 0** (total score unchanged).
-  - **Skip (unlimited) →** streak **preserved**; no result recorded for that category that day.
-  - **Missed day → all streaks reset.** Submitting nothing before `locks_at` resets every category's
-    streak to 0. (A category left untouched while you play others resets the same way — answer *or*
-    **Skip** to protect it.)
-- **Total score** (lifetime correct answers) is **cumulative and never resets**, even when a missed
-  day wipes your streaks — it's the permanent career tally.
-- Updates the **Leaderboard updater** → enqueues "results are in" push. Recompute is **idempotent**,
-  so amended outcomes correctly restate streaks, totals, and boards.
+Do not depend on an in-memory timer reaching the next UTC instant. Workers poll
+persisted due work, claim bounded batches with leases, recover expired claims, and
+use unique keys plus fencing to prevent a stale worker overwriting newer work.
+One configured worker replica is a cost choice, not a correctness guarantee:
+deployments/restarts can still overlap executions.
 
-**6e. Streaks & Skip — how it works (worked example)**
+Resolution commits result revision, audit/evidence and outbox work atomically.
+Scoring consumes that revision idempotently and advances checkpoints/projections
+transactionally. A crash after result commit is recoverable because the work
+still exists. Retry transient failures with bounded backoff; surface unknown
+providers/permanent failures instead of silently skipping them.
 
-Each category has its **own** streak and they move **independently**. Only **correct** answers grow a
-streak; **Skip** protects it for a day (but never grows it); a **wrong** answer or a **missed window**
-resets it to 0. Strategy: on a topic you're unsure about, **Skip to protect a long streak** rather
-than risk it.
+Incremental updates handle ordinary rounds. Corrections replay only the affected
+user/category range from a preceding checkpoint, publish a consistent projection
+generation, and restate dependent achievements/notifications. Preserve a full
+replay path for reconciliation. Do not synchronously load every user's entire
+history inside an administrator's HTTP outcome request.
 
-*Example.* You start with streaks **Sports 12 · Finance 3 · Pop 0** and a lifetime **Total score 40**
-(the rightmost column only ever climbs):
+Maintain chronological streak finality through pending earlier results. Distinguish
+settled totals, provisional new points and blocked streak calculations. A shared
+projection version/as-of marker makes lag visible to clients and operators.
 
-| Day | Sports | Finance | Pop Culture | Total score |
-|---|---|---|---|---|
-| Start | 12 | 3 | 0 | 40 |
-| Mon | ✅ → **13** | ❌ → **0** | ✅ → **1** | **42** (+2 correct) |
-| Tue | ⏭️ **Skip** → **13** | ✅ → **1** | ✅ → **2** | **44** (+2) |
-| Wed | 😴 **missed the day entirely — ALL streaks reset** → 0 | → 0 | → 0 | **44** (unchanged) |
-| Thu | ✅ → **1** | ⏭️ **Skip** → **0** | ✅ → **1** | **46** (+2) |
+## Leaderboards and public reads
 
-Takeaways: streaks are **per category** and **Skip** (unlimited) preserves one without growing it
-(Tue Sports 13); a **wrong** pick resets just that category (Mon Finance); **missing the whole day
-wipes all three streaks** (Wed) — but your **Total score never drops** (stays 44 through the missed
-day, then keeps climbing). Long streaks are the volatile flex; Total score is the permanent grind.
+Start with indexed SQL score/streak projection queries, bounded top pages and a
+personal/around-me lookup. Filter friends or league membership server-side.
+Keep phone/social identifiers out of responses and apply deletion/block rules.
 
----
+Preserve the existing API shape in the first foundation slice where practical;
+season qualification, shared tied ranks, cursor/as-of versions and around-me
+responses need an explicit contract revision. Choose deterministic display order,
+bounded counts and failure responses rather than relying on differing
+Redis/in-memory tie behavior.
 
-## 7. Social graph & contacts linking (phone numbers as IDs)
+At higher measured read volume, add short-lived public-board caching keyed by
+projection version; do not publicly cache personalized Today or friend boards.
+Cache failure degrades a read path, not accepted choices or result durability.
 
-**Privacy-preserving contact match**
-1. User grants Contacts permission on-device.
-2. App normalizes each number to **E.164**, then **hashes** it (SHA-256 over an **HMAC pepper**
-   fetched from the server; pepper stored in Key Vault) — **raw contact numbers never leave the
-   device**.
-3. App sends hashed numbers to `POST /contacts/match`.
-4. Server matches against registered users' hashed phones → returns which contacts are on the app
-   (respecting each user's discoverability opt-in) + invite suggestions for the rest.
-5. User sends/accepts **friend requests** (mutual edges) and/or joins **leagues** (groups); invites
-   also via share link (Universal/App Links).
+## Identity and mobile contract
 
-**Privacy/compliance notes:** phone-hash matching is enumerable, so mitigate with server pepper,
-strict rate-limiting, match-only responses for non-users, discoverability opt-out, and consent
-logging. (Future upgrade: **Private Set Intersection** for stronger guarantees.)
+Mandatory phone plus Apple/Google remains an owner constraint. Use a managed
+verification port for challenge start/verification, strict provider token
+validation, unique identity ownership and explicit linking/recovery flows.
+Social token audience/issuer/subject/expiry/nonce are never optional in production.
 
-**Storage:** friendships + league memberships in SQL; fast friends-leaderboard via per-league Redis
-Sorted Sets.
+If app-issued sessions are retained, they need atomic refresh rotation, family
+replay revocation, per-device management and recent-authentication for
+destructive/account changes. A managed CIAM alternative must prove equivalent
+required behavior, phone-verification evidence and account-link/recovery policy;
+do not confuse linked alternative logins with enforcing both requirements.
+Separate the operator identity plane from consumer phone bootstrap. See the
+[trust model](trust-and-safety.md) for controls and retention.
 
----
+Treat `clients/shared/openapi.yaml` as an **existing prototype contract**, not
+automatically a complete source of truth. Add CI generation/drift checks against
+the API, typed client generation and structured versioned error codes. Support
+an overlap period for released mobile clients; an app-store rollout is not atomic.
 
-## 8. Push notifications
-- **Azure Notification Hubs** — single fan-out to **APNs**; device registration with **tags**
-  (per-user, per-league, per-timezone).
-- **Notification types:** **global questions-live broadcast at `drop_at`** (same instant worldwide),
-  **window-closing "streak at risk" reminder** before `locks_at` (answer or **Skip** to protect your
-  streak), results-are-in (streak & score updates), social (friend joined, passed on leaderboard).
-- **Core loop is globally synchronized** (not timezone-staggered); timezone data is used only for
-  *ancillary* pings (e.g., quiet-hours handling for results/social notifications).
+Responses should carry server time, accepted revision/receipt, pending/final
+status, and actionable error codes. Authenticate deep-link actions again. Use
+single-flight refresh in the client; ambiguous network failures retain a draft
+and reconcile through idempotency rather than fabricate a successful save.
 
----
+## Delivery, configuration, and evolution
 
-## 9. Leaderboards (streak-based)
-- **Per-category boards** for **Sports, Finance, Pop Culture** — ranked by **current streak**, plus an
-  all-time **longest-streak** board per category. An **Overall** board sums a player's three current
-  streaks.
-- Each board has **Friends/League** and **Global** variants, backed by Redis **Sorted Sets** (score =
-  streak length) with SQL persistence for history and best-streaks.
-- **All-time Total-Score board** — lifetime correct answers, **never reset by missed days**; the
-  permanent progression board alongside the volatile streak boards (Friends + Global).
-- Integrity: every player answers the same global set within the same `drop_at` → `locks_at` 6-hour
-  window; the server rejects anything after `locks_at` (server-authoritative clock); anti-abuse via
-  App Attest/DeviceCheck + rate limits.
+Separate local Development behavior from every deployed environment, including
+an Azure environment named "dev." Production-like configuration must fail closed:
+no known signing key, fake social validator, logged OTP, silent push fallback,
+or process-local authoritative leaderboard.
 
----
+The first backend slice implements those guardrails and SQL projection reads.
+Both API and Workers accept `Sqlite` only in Development; deployed configuration
+requires `SqlServer`, database connection, signing key, server-only contacts
+pepper and Apple/Google audiences. `Sms:Provider` and `Push:Provider` default to
+`Disabled`; explicit `Development` adapters are rejected elsewhere. `Acs` is a
+legacy SMS opt-in, not the chosen verification architecture; `NotificationHubs`
+requires complete configuration. Disabled calls return explicit unavailability.
+`Resolution:UseStub` and all three existing scheduled-worker flags must remain
+false outside Development until their separate release work is completed.
 
-## 10. Cross-cutting concerns
-- **Secrets/keys:** Azure **Key Vault**; **Managed Identities** for service-to-Azure auth (no secrets
-  in code).
-- **Config/flags:** Azure **App Configuration** (category weights, feature flags, force-update).
-- **Eventing:** **Service Bus** (reliable work queues) + **Event Grid** (pub/sub events).
-- **Observability:** **Application Insights + Azure Monitor + Log Analytics**, OpenTelemetry tracing,
-  alerts/dashboards.
-- **Edge/security:** **Azure Front Door** (WAF, TLS, CDN, DDoS); optional **API Management** gateway.
-- **CI/CD & IaC:** **GitHub Actions** → build container → **Azure Container Registry** → deploy to
-  **Container Apps** (revision-based/blue-green); infra as **Bicep** (or Terraform); Dev/Staging/Prod
-  resource groups.
-- **Compliance:** GDPR/CCPA (consent, export, delete), contacts consent, age gating (13+/16+),
-  data residency.
+Separate resource bootstrap, image build, database migration/seed, app deployment
+and readiness verification. Deploy immutable image references; never converge an
+existing app back to hello-world. Apply backward-compatible expand/contract schema
+changes with a migrator identity, not API-startup DDL. Old/new revisions must
+coexist during rollback and mobile-version overlap.
 
----
+Use liveness for process health and readiness for the ability to serve the
+critical database-backed path. External push/SMS outages should be explicit
+feature failures, not hide database failure or necessarily take healthy gameplay
+offline. Define configuration validation and each readiness dependency separately.
 
-## 11. Key data model (entities)
-`User`, `FederatedIdentity`, `Device` (push tokens), `PhoneHash`, `Friendship`, `League`,
-`LeagueMembership`, `Category`, `ResolutionSource`,
-`Question` (`answer_type`=binary, `resolution_source`, `resolves_at`, `outcome`, `outcome_source`),
-`DailySet` (global `drop_at` + `locks_at`), `Guess` (binary pick **or** `is_skip`),
-`Streak` (per user × category: `current`, `best`), `Score` (per user × category: lifetime
-`total_correct`, never resets),
-`LeaderboardSnapshot`, `Notification`, `ModerationItem`, `AuditLog` (result sets & amendments).
+Implemented routes are anonymous `/health/live` (with `/health` as a compatibility
+alias) and `/health/ready`. Readiness checks core schema/seed reads with a bounded
+timeout and generic 503 failures; it never exposes connection details in the
+response. Non-Development startup uses the same read-only prerequisite checks.
+There is still no separately delivered production migrator/seed command.
 
----
+The integrated IaC mirrors the runtime's safe defaults. `infra/main.bicep` owns
+only the lean foundation; `infra/application.bicep` deploys explicit digest-pinned
+API/worker images after independent schema/network/secret gates. GitHub Actions
+pushes and the default manual phase validate locally, without Azure login or
+resource mutation. App application requires a fresh revision suffix, complete
+runtime configuration and versioned Key Vault references. The worker has no HTTP
+probe and no enabled scheduled jobs in deployed defaults.
 
-## 12. Azure services summary
+The beta foundation is intentionally not private-network-ready or deployable as a
+working game: SQL starts with no firewall entries, Key Vault is empty, all runtime
+SQL users/schema/seeds are external prerequisites, and no verification supplier
+is configured. It does not provision Redis, ACS, App Configuration, Storage or a
+Notification Hub. See the exact [resource/rollout contract](../infra/README.md)
+rather than inferring readiness from this target architecture.
 
-| Concern | Azure service |
-|---|---|
-| API / compute | Azure Container Apps (ASP.NET Core) |
-| Background jobs, scheduler, resolvers | Azure Functions + Durable Functions |
-| Eventing / queues | Azure Service Bus + Event Grid |
-| System of record | Azure SQL Database |
-| Leaderboards / cache | Azure Managed Redis |
-| Media / share cards | Azure Blob Storage + Front Door/CDN |
-| SMS OTP | Azure Communication Services |
-| Push (APNs) | Azure Notification Hubs |
-| AI question drafting | Azure OpenAI |
-| Secrets / keys | Azure Key Vault |
-| Config / feature flags | Azure App Configuration |
-| Observability | App Insights + Azure Monitor + Log Analytics |
-| Edge / WAF / CDN | Azure Front Door |
-| API gateway (optional) | Azure API Management |
-| Container registry | Azure Container Registry |
-| Admin / authoring web app | Azure Static Web Apps or Container Apps |
-| CI/CD + IaC | GitHub Actions + Bicep |
-
----
-
-## 13. Build workstreams (parallelizable)
-1. **Cloud foundation & IaC** — resource groups, Bicep, networking, Key Vault, registries, CI/CD.
-2. **Identity service** — phone OTP (ACS) + Apple/Google linking + JWT/refresh.
-3. **Core data & API** — SQL schema, Container Apps API, module seams.
-4. **Questions engine** — API-validatable **binary** question bank (Sports/Finance/Pop Culture), admin app with **manual set/amend result** (audited DB writes), AI drafting, Daily Set Builder (3/drop), automated resolution engine.
-5. **Streaks, total score & leaderboards** — per-category streak engine (correct → +1, wrong → reset, **unlimited Skip → preserve**, **missed day → reset all streaks**) plus a **cumulative total score that never resets**; idempotent recompute on outcome amendment; Redis Sorted Sets for per-category + overall streak boards and an all-time total-score board (friends/global).
-6. **Social graph & contacts** — privacy-preserving match, friend requests, leagues.
-7. **Notifications** — Notification Hubs, global drop broadcast + window-closing reminders, notification types.
-8. **iOS app** — SwiftUI, APNs, Contacts, Sign in with Apple, Keychain.
-9. **Security & compliance hardening** — anti-abuse, rate limits, GDPR flows, observability, load test.
-
----
-
-## 14. Open considerations / risks
-- **Contact-hash privacy** — add pepper + rate limits now; PSI later.
-- **Resolution latency** — reframe as anticipation; include same-day questions for instant wins.
-- **Global-board integrity** — server-locked timestamps + device attestation.
-- **Question sourcing at scale** — AI drafting + community submissions + moderation.
-- **Global drop time vs. timezones** — one synchronized drop means the fixed 6-hour window is
-  inconvenient for some regions; choose a `drop_at` that maximizes global waking overlap and revisit
-  the window length with real usage data.
-- **Skip economy (resolved)** — Skips are **unlimited** by design; the counterweights are that **any
-  fully-missed day resets all streaks** and that the **all-time total-score board** (never reset)
-  rewards actually showing up and answering — so hiding behind Skip forever still costs you progression.
-- **Cost at low scale** — prefer scale-to-zero (Container Apps/Functions) and right-size Redis/SQL.
+Defer microservices, Service Bus, Event Grid, Redis, AI question generation and
+multi-region writes. Introduce them only with an observed bottleneck or operational
+requirement and a migration/recovery plan. At this scale, correct transactions,
+good indexes, bounded work and a reliable content calendar matter more.

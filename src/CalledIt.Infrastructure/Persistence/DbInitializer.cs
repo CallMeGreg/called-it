@@ -3,27 +3,35 @@ using CalledIt.Domain;
 using CalledIt.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
 
 namespace CalledIt.Infrastructure.Persistence;
 
 /// <summary>
-/// Prepares the database on startup: applies migrations for relational providers that have them
-/// (SQL Server), or creates the schema for the SQLite dev/test database, then seeds the fixed
-/// categories, a couple of resolution sources, and any bootstrap admin accounts.
+/// Development-only schema creation and seeding. Deployed hosts require a separate migrator
+/// and seed lifecycle and only perform read-only prerequisite checks.
 /// </summary>
 public sealed class DbInitializer
 {
     private readonly AppDbContext _db;
     private readonly GameOptions _game;
+    private readonly IHostEnvironment _environment;
 
-    public DbInitializer(AppDbContext db, IOptions<GameOptions> game)
+    public DbInitializer(AppDbContext db, IOptions<GameOptions> game, IHostEnvironment environment)
     {
         _db = db;
         _game = game.Value;
+        _environment = environment;
     }
 
     public async Task InitializeAsync(CancellationToken ct = default)
     {
+        if (!_environment.IsDevelopment())
+        {
+            throw new InvalidOperationException(
+                "Runtime migration and seeding are only permitted in Development. Use a separate migrator/bootstrap identity.");
+        }
+
         if (_db.Database.IsSqlite())
         {
             await _db.Database.EnsureCreatedAsync(ct);

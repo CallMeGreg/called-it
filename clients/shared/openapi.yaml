@@ -36,14 +36,46 @@ paths:
   /health:
     get:
       tags: [Health]
-      summary: Liveness probe
+      summary: Compatibility alias for the process liveness probe
       security: []
       responses:
         '200':
-          description: Service healthy
+          description: Process is live; does not establish database or feature readiness
           content:
             application/json:
               schema: { $ref: '#/components/schemas/HealthStatus' }
+
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Process liveness independent of database availability
+      security: []
+      responses:
+        '200':
+          description: Process is live
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Read-only critical database schema and projection readiness
+      description: >
+        Checks the database-backed read path and fixed category seeds. Does not establish
+        SMS/push availability or completion of the remaining production release gates.
+      security: []
+      responses:
+        '200':
+          description: Critical database reads are available
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+        '503':
+          description: Database or critical schema unavailable; no connection details are exposed
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   /api/auth/otp:
     post:
@@ -56,13 +88,19 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RequestOtpRequest' }
       responses:
-        '202': { description: OTP dispatched (always 202, even for unknown numbers) }
+        '202': { description: OTP dispatched }
         '400': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
 
   /api/auth/login:
     post:
       tags: [Auth]
       summary: Complete login/registration (verify OTP + Apple/Google id_token) and issue tokens
+      description: >
+        Existing accounts require the already-linked phone and provider subject combination;
+        this operation does not link new identities or recover accounts. Phone verification
+        being disabled makes this operation explicitly unavailable.
       security: []
       requestBody:
         required: true
@@ -77,6 +115,8 @@ paths:
               schema: { $ref: '#/components/schemas/AuthResult' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
 
   /api/auth/refresh:
     post:
@@ -148,6 +188,10 @@ paths:
     get:
       tags: [Leaderboards]
       summary: Read a leaderboard by metric and scope
+      description: >
+        Reads persisted score/streak projections. Friends scope includes accepted friends in
+        either direction and the caller. Values sort descending, with user ID as the stable
+        tie display order; ranks remain ordinal within the requested scope.
       parameters:
         - name: type
           in: query
@@ -157,17 +201,18 @@ paths:
           schema: { $ref: '#/components/schemas/BoardScope' }
         - name: category
           in: query
-          description: Category code (required for CategoryStreak/CategoryBestStreak)
+          description: Category code (required for category boards; omit for OverallStreak/TotalScore)
           schema: { type: string, example: sports }
         - name: count
           in: query
-          schema: { type: integer, default: 50, minimum: 1, maximum: 200 }
+          schema: { type: integer, default: 50, minimum: 1, maximum: 100 }
       responses:
         '200':
           description: Ranked rows
           content:
             application/json:
               schema: { $ref: '#/components/schemas/LeaderboardResult' }
+        '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
 
   /api/friends/requests:

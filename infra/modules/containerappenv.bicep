@@ -1,4 +1,4 @@
-// Container Apps managed environment wired to Log Analytics + Application Insights (Dapr-ready).
+// Consumption environment with platform/container logs; not application SDK instrumentation.
 @description('Azure region for the resources.')
 param location string
 
@@ -10,10 +10,6 @@ param tags object
 
 @description('Log Analytics workspace resource id.')
 param logAnalyticsId string
-
-@description('Application Insights connection string for the environment.')
-@secure()
-param appInsightsConnectionString string
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: last(split(logAnalyticsId, '/'))
@@ -31,8 +27,13 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
-    daprAIConnectionString: appInsightsConnectionString
     zoneRedundant: false
+    workloadProfiles: [
+      {
+        name: 'Consumption'
+        workloadProfileType: 'Consumption'
+      }
+    ]
   }
 }
 

@@ -26,7 +26,7 @@ public sealed class LeaderboardsController : ControllerBase
         [FromQuery] int count = 50,
         CancellationToken ct = default)
     {
-        var result = await _boards.GetAsync(type, scope, User.UserId(), category, Math.Clamp(count, 1, 200), ct);
+        var result = await _boards.GetAsync(type, scope, User.UserId(), category, count, ct);
         return Ok(result);
     }
 }

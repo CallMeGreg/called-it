@@ -1,100 +1,58 @@
-// ---------------------------------------------------------------------------------------------
-// Called It — main infrastructure (resource-group scoped).
-// Deploy:  az deployment group create -g <rg> -f infra/main.bicep -p infra/main.<env>.bicepparam
-// ---------------------------------------------------------------------------------------------
 targetScope = 'resourceGroup'
 
-@description('Short base name for all resources (lowercase alphanumeric).')
+@description('Foundation only: no application deployment. Lowercase alphanumeric resource prefix.')
+@minLength(3)
+@maxLength(10)
 param namePrefix string = 'calledit'
 
-@description('Environment discriminator.')
 @allowed([ 'dev', 'prod' ])
 param environmentName string
 
-@description('Azure region. Defaults to the resource group location.')
-param location string = resourceGroup().location
+@description('Owner-approved region; no region or subscription capacity is inferred by this template.')
+@minLength(1)
+param location string
 
-// --- SQL ---
-@description('SQL administrator login.')
-param sqlAdministratorLogin string
+@description('Object ID of the separately authorized Entra SQL administrator.')
+@minLength(36)
+@maxLength(36)
+param sqlEntraAdminObjectId string
 
-@description('SQL administrator password.')
-@secure()
-param sqlAdministratorPassword string
+@minLength(1)
+param sqlEntraAdminLogin string
 
-@description('Optional Entra admin object id for the SQL server (recommended for managed-identity access).')
-param sqlAadAdminObjectId string = ''
+@allowed([ 'Group', 'User', 'Application' ])
+param sqlEntraAdminPrincipalType string = 'Group'
 
-@description('Optional Entra admin login/display name for the SQL server.')
-param sqlAadAdminLogin string = ''
+@description('Candidate serverless maximum vCores, not a price or capacity guarantee.')
+@allowed([ 1, 2 ])
+param sqlMaxVcores int = 1
 
-@description('Disable SQL-auth logins so only Entra identities can connect (requires an Entra admin + the managed-identity contained user). Recommended true for production.')
-param sqlAadOnlyAuthentication bool = false
+@allowed([ '0.5', '1' ])
+param sqlMinVcores string = '0.5'
 
-// --- App secrets ---
-@description('JWT signing key (>= 32 chars). Store in Key Vault / CI secret, never in source.')
-@secure()
-param authSigningKey string
+@description('-1 keeps SQL warm. 60 is only for disposable, non-competition environments; app rollout rejects paused SQL.')
+@allowed([ -1, 60 ])
+param sqlAutoPauseDelay int = -1
 
-@description('HMAC pepper for privacy-preserving contact hashing.')
-@secure()
-param contactsPepper string
+@allowed([ 5, 10, 20, 32 ])
+param sqlMaxSizeGb int = 5
 
-// --- Notifications / SMS ---
-@description('Provisioned ACS sender number in E.164 (empty until purchased — dev SMS is used meanwhile).')
-param acsFromNumber string = ''
+@description('Explicit single IPv4 client/egress addresses. Empty means no public SQL firewall access; no allow-all-Azure rule.')
+@maxLength(32)
+param sqlAllowedClientIps string[] = []
 
-// --- Game config ---
-@description('Phone numbers (E.164) bootstrapped as admins.')
-param adminBootstrapPhones array = []
-
-// --- Images (CD overrides these with the freshly built, tagged images) ---
-@description('API container image reference.')
-param apiImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-
-@description('Workers container image reference.')
-param workersImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-
-// --- Sizing (overridden per environment) ---
-@description('ACR SKU.')
-param acrSku string = 'Basic'
-
-@description('Azure Managed Redis SKU (e.g. Balanced_B0 is the smallest).')
-param redisSkuName string = 'Balanced_B0'
-
-@description('Enable Azure Managed Redis high availability (dataset replication). Recommended for production.')
-param redisHighAvailability bool = false
-
-@description('Minimum container replicas.')
-param minReplicas int = 1
-
-@description('Maximum container replicas.')
-param maxReplicas int = 3
-
-// ---------------------------------------------------------------------------------------------
+@description('Log ingestion daily cap in GB. Delayed enforcement/exclusions mean this is not a billing ceiling.')
+@allowed([ '0.1', '0.5', '1' ])
+param logDailyCapGb string = '0.1'
 
 var tags = {
   application: 'called-it'
   environment: environmentName
   managedBy: 'bicep'
 }
-
 var suffix = uniqueString(resourceGroup().id)
 var prefix = '${namePrefix}-${environmentName}'
 
-// Globally-unique names (stripped of hyphens where the resource requires it).
-var acrName = '${namePrefix}${environmentName}acr${suffix}'
-var keyVaultName = '${prefix}-kv-${take(suffix, 5)}'
-var storageName = '${namePrefix}${environmentName}st${take(suffix, 8)}'
-var sqlServerName = '${prefix}-sql-${take(suffix, 6)}'
-var redisName = '${prefix}-redis-${take(suffix, 6)}'
-var appConfigName = '${prefix}-appcs-${take(suffix, 6)}'
-var nhNamespaceName = '${prefix}-nh-${take(suffix, 6)}'
-var acsName = '${prefix}-acs-${take(suffix, 6)}'
-var databaseName = 'calledit'
-var hubName = 'drops'
-
-// ---- Identity (shared by both apps) ----
 module identity 'modules/identity.bicep' = {
   name: 'identity'
   params: {
@@ -104,112 +62,54 @@ module identity 'modules/identity.bicep' = {
   }
 }
 
-// ---- Observability ----
 module observability 'modules/observability.bicep' = {
   name: 'observability'
   params: {
     location: location
     namePrefix: prefix
     tags: tags
-    retentionInDays: environmentName == 'prod' ? 90 : 30
+    dailyCapGb: logDailyCapGb
   }
 }
 
-// ---- Registry ----
 module registry 'modules/registry.bicep' = {
   name: 'registry'
   params: {
     location: location
-    registryName: acrName
+    registryName: '${namePrefix}${environmentName}acr${suffix}'
     tags: tags
-    sku: acrSku
     pullPrincipalId: identity.outputs.principalId
   }
 }
 
-// ---- Key Vault ----
 module keyVault 'modules/keyvault.bicep' = {
   name: 'keyVault'
   params: {
     location: location
-    keyVaultName: keyVaultName
+    keyVaultName: '${prefix}-kv-${take(suffix, 5)}'
     tags: tags
     keyVaultReaderPrincipalId: identity.outputs.principalId
   }
 }
 
-// ---- SQL ----
 module sql 'modules/sql.bicep' = {
   name: 'sql'
   params: {
     location: location
-    sqlServerName: sqlServerName
-    databaseName: databaseName
+    sqlServerName: '${prefix}-sql-${take(suffix, 6)}'
+    databaseName: 'calledit'
     tags: tags
-    administratorLogin: sqlAdministratorLogin
-    administratorPassword: sqlAdministratorPassword
-    aadAdminObjectId: sqlAadAdminObjectId
-    aadAdminLogin: sqlAadAdminLogin
-    aadOnlyAuthentication: sqlAadOnlyAuthentication
+    entraAdminObjectId: sqlEntraAdminObjectId
+    entraAdminLogin: sqlEntraAdminLogin
+    entraAdminPrincipalType: sqlEntraAdminPrincipalType
+    maxVcores: sqlMaxVcores
+    minVcores: sqlMinVcores
+    autoPauseDelay: sqlAutoPauseDelay
+    maxSizeGb: sqlMaxSizeGb
+    allowedClientIps: sqlAllowedClientIps
   }
 }
 
-// ---- Redis ----
-module redis 'modules/redis.bicep' = {
-  name: 'redis'
-  params: {
-    location: location
-    redisName: redisName
-    tags: tags
-    skuName: redisSkuName
-    highAvailability: redisHighAvailability
-  }
-}
-
-// ---- Storage ----
-module storage 'modules/storage.bicep' = {
-  name: 'storage'
-  params: {
-    location: location
-    storageAccountName: storageName
-    tags: tags
-    dataContributorPrincipalId: identity.outputs.principalId
-  }
-}
-
-// ---- App Configuration ----
-module appConfig 'modules/appconfig.bicep' = {
-  name: 'appConfig'
-  params: {
-    location: location
-    configName: appConfigName
-    tags: tags
-    dataReaderPrincipalId: identity.outputs.principalId
-    sku: environmentName == 'prod' ? 'standard' : 'free'
-  }
-}
-
-// ---- Notification Hubs ----
-module notificationHubs 'modules/notificationhubs.bicep' = {
-  name: 'notificationHubs'
-  params: {
-    location: location
-    namespaceName: nhNamespaceName
-    hubName: hubName
-    tags: tags
-  }
-}
-
-// ---- Communication Services (SMS) ----
-module communication 'modules/communication.bicep' = {
-  name: 'communication'
-  params: {
-    communicationName: acsName
-    tags: tags
-  }
-}
-
-// ---- Container Apps environment ----
 module containerEnv 'modules/containerappenv.bicep' = {
   name: 'containerEnv'
   params: {
@@ -217,85 +117,43 @@ module containerEnv 'modules/containerappenv.bicep' = {
     namePrefix: prefix
     tags: tags
     logAnalyticsId: observability.outputs.logAnalyticsId
-    appInsightsConnectionString: observability.outputs.appInsightsConnectionString
   }
 }
 
-// ---- Shared app configuration ----
-var sqlConnectionString = 'Server=tcp:${sql.outputs.serverFqdn},1433;Database=${sql.outputs.databaseName};Authentication=Active Directory Managed Identity;User Id=${identity.outputs.clientId};Encrypt=True;TrustServerCertificate=False;'
-
-var adminPhoneEnv = [for (phone, i) in adminBootstrapPhones: {
-  name: 'Game__AdminBootstrapPhones__${i}'
-  value: phone
-}]
-
-var commonEnv = concat([
-  { name: 'ASPNETCORE_URLS', value: 'http://+:8080' }
-  { name: 'AZURE_CLIENT_ID', value: identity.outputs.clientId }
-  { name: 'Database__Provider', value: 'SqlServer' }
-  { name: 'ConnectionStrings__Database', value: sqlConnectionString }
-  { name: 'NotificationHubs__HubName', value: notificationHubs.outputs.hubName }
-  { name: 'Acs__FromNumber', value: acsFromNumber }
-  { name: 'AppConfig__Endpoint', value: appConfig.outputs.endpoint }
-  { name: 'Storage__BlobEndpoint', value: storage.outputs.blobEndpoint }
-  { name: 'SocialAuth__UseFake', value: 'false' }
-], adminPhoneEnv)
-
-var commonSecrets = [
-  { name: 'redis-connection', envName: 'ConnectionStrings__Redis', value: redis.outputs.connectionString }
-  { name: 'acs-connection', envName: 'Acs__ConnectionString', value: communication.outputs.connectionString }
-  { name: 'nh-connection', envName: 'NotificationHubs__ConnectionString', value: notificationHubs.outputs.connectionString }
-  { name: 'appinsights-connection', envName: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: observability.outputs.appInsightsConnectionString }
-  { name: 'auth-signingkey', envName: 'Auth__SigningKey', value: authSigningKey }
-  { name: 'contacts-pepper', envName: 'Contacts__Pepper', value: contactsPepper }
-]
-
-// ---- API container app (external ingress) ----
-module apiApp 'modules/containerapp.bicep' = {
-  name: 'apiApp'
-  params: {
-    location: location
-    name: '${prefix}-api'
-    tags: tags
-    environmentId: containerEnv.outputs.id
-    identityId: identity.outputs.id
-    registryServer: registry.outputs.loginServer
-    image: apiImage
-    externalIngress: true
-    targetPort: 8080
-    envVars: commonEnv
-    secrets: commonSecrets
-    minReplicas: minReplicas
-    maxReplicas: maxReplicas
+// Non-secret handoff, read from a successful foundation deployment before build/rollout.
+output foundation object = {
+  schemaVersion: 1
+  environmentName: environmentName
+  location: location
+  resourceGroupId: resourceGroup().id
+  registry: {
+    id: registry.outputs.id
+    name: registry.outputs.name
+    loginServer: registry.outputs.loginServer
+  }
+  identity: {
+    id: identity.outputs.id
+    name: identity.outputs.name
+    principalId: identity.outputs.principalId
+    clientId: identity.outputs.clientId
+  }
+  keyVault: {
+    id: keyVault.outputs.id
+    name: keyVault.outputs.name
+    uri: keyVault.outputs.uri
+  }
+  sql: {
+    serverName: sql.outputs.serverName
+    serverFqdn: sql.outputs.serverFqdn
+    databaseName: sql.outputs.databaseName
+    autoPauseDelay: sqlAutoPauseDelay
+  }
+  containerEnvironment: {
+    id: containerEnv.outputs.id
+    name: containerEnv.outputs.name
+  }
+  applications: {
+    apiName: '${prefix}-api'
+    workersName: '${prefix}-workers'
   }
 }
-
-// ---- Workers container app (no ingress) ----
-module workersApp 'modules/containerapp.bicep' = {
-  name: 'workersApp'
-  params: {
-    location: location
-    name: '${prefix}-workers'
-    tags: tags
-    environmentId: containerEnv.outputs.id
-    identityId: identity.outputs.id
-    registryServer: registry.outputs.loginServer
-    image: workersImage
-    externalIngress: false
-    envVars: commonEnv
-    secrets: commonSecrets
-    minReplicas: 1
-    maxReplicas: 1
-  }
-}
-
-// ---- Outputs (consumed by CI/CD) ----
-output acrLoginServer string = registry.outputs.loginServer
-output acrName string = registry.outputs.name
-output apiName string = apiApp.outputs.name
-output apiFqdn string = apiApp.outputs.fqdn
-output workersName string = workersApp.outputs.name
-output identityClientId string = identity.outputs.clientId
-output keyVaultName string = keyVault.outputs.name
-output sqlServerFqdn string = sql.outputs.serverFqdn
-output appConfigEndpoint string = appConfig.outputs.endpoint

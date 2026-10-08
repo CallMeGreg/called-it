@@ -9,18 +9,20 @@ using CalledIt.Infrastructure;
 using CalledIt.Infrastructure.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace CalledIt.Application.Tests;
 
 /// <summary>
 /// Boots the real Application + Infrastructure composition root against a throwaway on-disk SQLite
-/// database, so tests exercise the same wiring (EF Core, the SQLite DateTimeOffset converter, the
-/// in-memory leaderboard store, the stub resolver) that production uses — only the external adapters
-/// differ. Each instance gets an isolated database file and is disposed at the end of the test.
+/// database with explicit Development adapters. SQL Server behavior requires separate validation.
+/// Each instance gets an isolated database file and is disposed at the end of the test.
 /// </summary>
 public sealed class TestApp : IDisposable
 {
     private readonly string _dbPath;
+    private readonly IConfiguration _configuration;
+    private readonly Action<IServiceCollection>? _configureServices;
     public IServiceProvider Services { get; }
 
     public TestApp()
@@ -28,16 +30,22 @@ public sealed class TestApp : IDisposable
     {
     }
 
-    public TestApp(IDictionary<string, string?>? configOverrides)
+    public TestApp(
+        IDictionary<string, string?>? configOverrides, Action<IServiceCollection>? configureServices = null)
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"calledit-tests-{Guid.NewGuid():N}.db");
 
         var settings = new Dictionary<string, string?>
         {
+            ["Auth:Issuer"] = "called-it",
+            ["Auth:Audience"] = "called-it-clients",
             ["Auth:SigningKey"] = "unit-tests-signing-key-0123456789-abcdefghij",
             ["Database:Provider"] = "Sqlite",
             ["ConnectionStrings:Database"] = $"Data Source={_dbPath}",
             ["SocialAuth:UseFake"] = "true",
+            ["Sms:Provider"] = "Development",
+            ["Push:Provider"] = "Development",
+            ["Resolution:UseStub"] = "true",
             ["Contacts:Pepper"] = "unit-tests-pepper",
             ["Game:AdminBootstrapPhones:0"] = "+15555550100",
         };
@@ -50,26 +58,34 @@ public sealed class TestApp : IDisposable
             }
         }
 
-        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
-
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddApplication(config);
-        services.AddInfrastructure(config);
-        Services = services.BuildServiceProvider();
+        _configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        _configureServices = configureServices;
+        Services = CreateServices();
 
         using var scope = Services.CreateScope();
         scope.ServiceProvider.GetRequiredService<DbInitializer>()
             .InitializeAsync().GetAwaiter().GetResult();
     }
 
-    private async Task<T> ScopedAsync<T>(Func<IServiceProvider, Task<T>> work)
+    public ServiceProvider CreateServices()
+    {
+        var environment = new TestHostEnvironment();
+        var services = new ServiceCollection();
+        services.AddSingleton<IHostEnvironment>(environment);
+        services.AddLogging();
+        services.AddApplication(_configuration);
+        services.AddInfrastructure(_configuration, environment);
+        _configureServices?.Invoke(services);
+        return services.BuildServiceProvider();
+    }
+
+    public async Task<T> ScopedAsync<T>(Func<IServiceProvider, Task<T>> work)
     {
         using var scope = Services.CreateScope();
         return await work(scope.ServiceProvider);
     }
 
-    private async Task ScopedAsync(Func<IServiceProvider, Task> work)
+    public async Task ScopedAsync(Func<IServiceProvider, Task> work)
     {
         using var scope = Services.CreateScope();
         await work(scope.ServiceProvider);

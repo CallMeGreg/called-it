@@ -1,4 +1,5 @@
 using CalledIt.Application.Abstractions;
+using CalledIt.Application.Common;
 using CalledIt.Domain;
 
 namespace CalledIt.Infrastructure.Identity;
@@ -12,13 +13,17 @@ public sealed class FakeSocialTokenValidator : ISocialTokenValidator
 {
     public Task<SocialIdentity> ValidateAsync(SocialProvider provider, string idToken, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(idToken))
+        if (!Enum.IsDefined(provider) || string.IsNullOrWhiteSpace(idToken))
         {
-            throw new ArgumentException("id_token is required.", nameof(idToken));
+            throw new ValidationException("A valid social provider and id_token are required.");
         }
 
         var parts = idToken.Split('|', 2);
         var subject = parts[0].Trim();
+        if (string.IsNullOrWhiteSpace(subject) || subject.Length > 256)
+        {
+            throw new ValidationException("A valid social subject is required.");
+        }
         var email = parts.Length > 1 ? parts[1].Trim() : null;
 
         return Task.FromResult(new SocialIdentity(provider, subject, email));

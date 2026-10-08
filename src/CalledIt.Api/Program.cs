@@ -17,7 +17,7 @@ builder.Services
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.AddApplication(builder.Configuration);
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 
 // --- Authentication (JWT bearer, matching the tokens issued by JwtTokenService) ---
 var auth = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
@@ -33,11 +33,11 @@ builder.Services
             ValidateAudience = true,
             ValidAudience = auth.Audience,
             ValidateLifetime = true,
+            RequireExpirationTime = true,
+            RequireSignedTokens = true,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(string.IsNullOrWhiteSpace(auth.SigningKey)
-                    ? new string('0', 32)
-                    : auth.SigningKey)),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(auth.SigningKey)),
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
             NameClaimType = "sub",
             RoleClaimType = ClaimTypes.Role,
             ClockSkew = TimeSpan.FromSeconds(30),
@@ -65,11 +65,9 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// Prepare the database (create/seed for SQLite dev/test, migrate for SQL Server).
 using (var scope = app.Services.CreateScope())
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<DbInitializer>();
-    await initializer.InitializeAsync();
+    await scope.ServiceProvider.GetRequiredService<DatabaseStartup>().PrepareAsync();
 }
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();

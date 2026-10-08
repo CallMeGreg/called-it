@@ -32,14 +32,14 @@ jobs:
         run: dotnet test CalledIt.sln -c Release --no-build --verbosity normal
 
   validate-infra:
-    name: Validate Bicep
+    name: Compile infrastructure and exercise local guards
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Build Bicep templates
+      - name: Set up pinned Bicep (no Azure login)
         run: |
-          az bicep install
-          az bicep build --file infra/main.bicep --stdout > /dev/null
-          az bicep build-params --file infra/main.dev.bicepparam --stdout > /dev/null
-          az bicep build-params --file infra/main.prod.bicepparam --stdout > /dev/null
+          az bicep install --version v0.48.1
+
+      - name: Compile main, both parameter files and application; test deployment policy
+        run: python3 infra/scripts/validate.py --bicep "$HOME/.azure/bin/bicep"
