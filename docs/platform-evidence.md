@@ -63,11 +63,12 @@ gaming. A free binary-prediction game is not automatically either, but labels do
 not decide policy classification. Keep non-redeemable points separate from
 financial products and obtain review before adding prizes, entry fees or currency.
 
-The inspected baseline's `LICENSE` is MIT. Review the exact license on the
-eventual release revision and every dependency for distribution/source
-obligations, signing/store terms and necessary contributor rights; other branches
-are not evidence of this branch's license. This plan does not change the license
-or assert a legal conclusion about store compatibility.
+The initially inspected revision used MIT. The subsequent `main` change to
+**AGPL-3.0-only** is now integrated and preserved in this branch. Review the exact
+release license and every dependency for distribution/source obligations,
+network-source availability, signing/store terms and necessary contributor
+rights. This redesign does not select a different license or assert a legal
+conclusion about store compatibility.
 
 ## Notifications
 
