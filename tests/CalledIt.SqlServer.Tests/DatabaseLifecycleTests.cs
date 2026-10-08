@@ -199,6 +199,7 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
             await owner.Database.ExecuteSqlRawAsync(roleScript);
             await owner.Database.ExecuteSqlRawAsync("""
                 CREATE USER [calledit_runtime_test] WITHOUT LOGIN;
+                CREATE USER [calledit_grant_target] WITHOUT LOGIN;
                 ALTER ROLE [calledit_runtime] ADD MEMBER [calledit_runtime_test];
                 """);
         }
@@ -206,6 +207,11 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
         await using var connection = new SqlConnection(database.ConnectionString);
         await connection.OpenAsync();
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connection).Options);
+        string[] grants =
+        [
+            "GRANT SELECT ON OBJECT::[dbo].[Users] TO [calledit_grant_target]",
+            "GRANT UPDATE ON OBJECT::[dbo].[Categories] TO [calledit_grant_target]",
+        ];
         await db.Database.ExecuteSqlRawAsync("EXECUTE AS USER = N'calledit_runtime_test'");
         try
         {
@@ -229,7 +235,6 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
                 "CREATE USER [RuntimeMustNotCreateUser] WITHOUT LOGIN",
                 "CREATE ROLE [RuntimeMustNotCreateRole]",
                 "ALTER ROLE [db_owner] ADD MEMBER [calledit_runtime_test]",
-                "GRANT UPDATE ON OBJECT::[dbo].[Categories] TO [calledit_runtime_test]",
                 "DELETE FROM [dbo].[Categories]",
                 "DELETE FROM [dbo].[AuditLogs]",
                 "DELETE FROM [dbo].[__EFMigrationsHistory]",
@@ -244,11 +249,31 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
             Assert.All(denials, denial => Assert.True(
                 new[] { 229, 262, 1088, 15151, 15247, 4902, 3701, 2760 }.Contains(denial.Number),
                 $"Unexpected SQL error {denial.Number} for: {denial.Sql}"));
+
+            // GRANT can return a warning rather than throwing; verify the effective permissions below.
+            foreach (var grant in grants)
+            {
+                try
+                {
+                    await db.Database.ExecuteSqlRawAsync(grant);
+                    output.WriteLine($"GRANT returned without an exception; checking effective permissions: {grant}");
+                }
+                catch (SqlException failure)
+                {
+                    output.WriteLine($"SQL {failure.Number} rejected: {grant}");
+                }
+            }
         }
         finally
         {
             await db.Database.ExecuteSqlRawAsync("REVERT");
         }
+        await AssertGrantPermissionsAsync(db, expected: 0);
+        foreach (var grant in grants)
+        {
+            await db.Database.ExecuteSqlRawAsync(grant);
+        }
+        await AssertGrantPermissionsAsync(db, expected: 1);
     }
 
     [Fact]
@@ -300,6 +325,22 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
     }
 
     private static DatabaseReadiness Readiness(AppDbContext db) => new(db, NullLogger<DatabaseReadiness>.Instance);
+
+    private static async Task AssertGrantPermissionsAsync(AppDbContext db, int expected)
+    {
+        await db.Database.ExecuteSqlRawAsync("EXECUTE AS USER = N'calledit_grant_target'");
+        try
+        {
+            Assert.Equal(expected, await db.Database.SqlQueryRaw<int>(
+                "SELECT HAS_PERMS_BY_NAME(N'dbo.Users', N'OBJECT', N'SELECT') AS [Value]").SingleAsync());
+            Assert.Equal(expected, await db.Database.SqlQueryRaw<int>(
+                "SELECT HAS_PERMS_BY_NAME(N'dbo.Categories', N'OBJECT', N'UPDATE') AS [Value]").SingleAsync());
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync("REVERT");
+        }
+    }
 
     private static DatabaseStartup Startup(AppDbContext db)
     {
