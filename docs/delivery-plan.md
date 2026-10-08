@@ -43,8 +43,10 @@ disabled. An explicitly disabled feature should return an intentional unavailabl
 response if called, not silently use a development logger or return success.
 
 **Progress:** the backend guardrails/SQL-read slice is integrated. Production
-initialization is now read-only as well; the migrator/seed lifecycle remains an
-explicit gate. The lean Azure/bootstrap/application-deployment slice is also
+initialization is now read-only as well. A separate [migrator/category-seed command
+and SQL Server lane](database-lifecycle.md) now implement the next prerequisites;
+authorized Azure bootstrap/network/identity/restore evidence remains an explicit
+gate. The lean Azure/bootstrap/application-deployment slice is also
 integrated, with local-only defaults and no actual cloud deployment. Neither slice
 implements the complete game, privacy flows or native client. See the
 [implementation evidence](README.md#first-implementation-progress).
@@ -52,9 +54,9 @@ implements the complete game, privacy flows or native client. See the
 ### Next implementation sequence
 
 First ratify D1-D4 and D8; these determine eligibility, content timing and the
-competition state machine. Then implement phase 1 with a **real SQL Server test
-lane and reviewed migrator/category-seed command** as prerequisites, followed by
-publication/atomic choice receipts, durable outbox/claims and ordered progression.
+competition state machine. Phase 1 now has a **real SQL Server test lane and
+separate migrator/category-seed command** for review; retain these checks while
+implementing publication/atomic choice receipts, durable outbox/claims and ordered progression.
 This closes the correctness gap instead of merely making more screens interactive.
 
 In parallel with that bounded work, the owner can prove the D5 identity-provider
@@ -95,6 +97,24 @@ identity/privacy, native builds and the other release gates below are satisfied.
 | D9 | Store/legal/privacy readiness | Confirm publishing entity, target audience, phone-data necessity, policies, licenses and data retention with appropriate advice. |
 
 ## Manual setup and launch checklist
+
+Legacy setup [#1](https://github.com/CallMeGreg/called-it/issues/1) is superseded
+by this checklist and the current infrastructure guide, not a source of commands
+to rerun. Read-only GitHub metadata revalidation on **2026-10-08** found:
+
+| Previously checked claim | Current evidence / disposition |
+| --- | --- |
+| `dev` and `prod` environments exist / approvals configured | Both exist, but both have **no protection rules and no deployment-branch policy**. Deployment approval remains blocked. |
+| Azure OIDC IDs and resource groups configured | Repository ID secret names and environment resource-group variable names exist. No secret values, Entra app/federation, Azure groups, roles or actual connectivity were verified. |
+| Signing key, pepper and SQL password configured | Legacy secret names exist in both environments. Their presence is not proof of current versioned Key Vault values, correct runtime wiring or rotation. SQL password fallback is retired. |
+| Automatic deployment enabled | The old repository `AZURE_DEPLOY_ENABLED` variable remains `true`; it is not approval. Current push/default-plan paths are local-only, and required protected-environment acknowledgments are absent. No settings were changed by this read-only revalidation. |
+
+Retire the old ACS purchase/dev-OTP fallback, runtime `db_ddladmin`/startup-DDL,
+optional approvals, old App Configuration/admin-phone bootstrap, and automatic
+deployment instructions. Do not delete or rotate old resources/secrets without
+an authorized adoption/cleanup plan. Apple-only SwiftUI setup is not the approved
+shared iOS/Android release path. Product rules and all Azure/native/legal claims
+without fresh evidence remain unverified.
 
 Status for every item below starts **not verified**. Prior work, existing Azure
 objects or old GitHub issues are not proof that the current design is configured.

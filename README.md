@@ -38,9 +38,10 @@ reference rather than silently imported into this branch.
 src/CalledIt.Domain/          Entities and pure scoring calculations
 src/CalledIt.Application/     Identity, competition, scoring and social use cases
 src/CalledIt.Infrastructure/  Persistence and external adapters
+src/CalledIt.Migrator/        Explicit, separately authorized SQL migration/seed CLI
 src/CalledIt.Api/             ASP.NET Core HTTP API
 src/CalledIt.Workers/         Existing scheduled worker host
-tests/                       Domain, application and API tests
+tests/                       Domain, application, API and real SQL Server tests
 infra/                       Bicep and deployment configuration
 clients/shared/              Existing OpenAPI contract
 clients/ios/                 Legacy SwiftUI reference, not the approved launch client
@@ -67,7 +68,7 @@ non-production authentication/messaging adapters; never expose it publicly.
 ```bash
 dotnet restore CalledIt.sln
 dotnet build CalledIt.sln -c Release --no-restore
-dotnet test CalledIt.sln -c Release --no-build
+dotnet test CalledIt.sln -c Release --no-build --filter "Category!=SqlServer"
 dotnet run --project src/CalledIt.Api --launch-profile http
 ```
 
@@ -84,6 +85,11 @@ competition-integrity phase.
 
 See [current implementation progress](docs/README.md#first-implementation-progress)
 for the guardrail coverage and its remaining validation limits.
+
+The separate [database lifecycle and SQL Server lane](docs/database-lifecycle.md)
+documents reviewed migration/seed commands and real-provider coverage. Running
+that test project requires an explicitly configured disposable SQL Server; it
+does not fall back to SQLite or authorize an Azure bootstrap.
 
 ## Infrastructure and clients
 

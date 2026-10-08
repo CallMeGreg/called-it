@@ -57,12 +57,14 @@ Use the delivery plan as the release checklist. Preserve the distinction between
 | --- | --- |
 | Backend guardrails | Integrated: both hosts reject unsafe deployed configuration; identity ownership and OIDC validation tightened; SQL projections replace Redis/in-memory standings; production startup is read-only; live/ready endpoints added. |
 | Azure foundation | Integrated: foundation-only Bicep, separate immutable application rollout, versioned secret references, API-only health/scaling, and opt-in deployment phases. Default/manual-plan/push paths perform local validation only. No Azure resources were created. |
+| SQL prerequisites | Separate migration/category-seed executable and real SQL Server CI lane added; see [database lifecycle](database-lifecycle.md). Azure contained identities, network reachability, operator authorization and recovery remain unverified. |
 | Competition, native client and public launch | Still gated. The complete timing/outbox/scoring protocol, vendor-backed identity lifecycle, deletion/moderation, notifications and store builds are not delivered by the guardrails slice. |
 
-The integrated backend passes the full solution build and 158 local tests
+The first integrated backend passed the full solution build and 158 local tests
 (20 domain, 112 application, 26 API). Successful database tests use SQLite, **not
-SQL Server**; no production query-plan/load/concurrency, managed-identity,
-least-privilege, migration/seed, cloud capacity or native-device result is implied.
+SQL Server**. The new, separately selected provider lane covers migration/seed,
+queries, bounded constraint races and contained-user permissions, not production
+load, managed identity, cloud capacity or native-device behavior.
 
 Infrastructure verification compiles the foundation, both parameter files and
 application template with explicit non-secret fixtures. Its 42 local tests and

@@ -251,15 +251,18 @@ After foundation exists, a database owner must establish and record all of:
   runtime `db_owner`, `db_ddladmin`, or migration/schema ownership.
 - A **separate migrator/bootstrap principal** and reviewed SQL Server-compatible
   schema, migration history, required categories/seed data and rollback-compatible
-  version. No migrator lifecycle/schema script is supplied by this slice; existing
-  prototype migrations are not proof they work against Azure SQL.
+  version. The separate [migration/category-seed CLI and provider lane](../docs/database-lifecycle.md)
+  supply reviewable tooling, not an authorized Azure bootstrap. Review
+  `sql/runtime-role.sql` for named-object runtime grants; user creation/membership
+  and removal of legacy excessive privileges remain owner operations.
 - A successful read-only critical schema/projection/category-seed probe and
   least-privilege runtime connection from the selected deployment network, without
   using privileged administrator credentials.
 
 Both guarded deployed hosts perform read-only critical checks and stop on failure.
 Neither host applies startup DDL or seeds outside Development. Do not enable
-`SQL_BOOTSTRAP_APPROVED` until the separate lifecycle exists and has been exercised.
+`SQL_BOOTSTRAP_APPROVED` until the separate lifecycle has been reviewed and exercised
+with the intended Azure principals and network.
 This is a current **rollout blocker**, not an informational setup suggestion.
 
 ### Key Vault population, reachability and rotation

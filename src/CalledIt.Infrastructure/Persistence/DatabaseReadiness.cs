@@ -24,7 +24,7 @@ public sealed class DatabaseReadiness
         {
             var categories = await _db.Categories.AsNoTracking()
                 .Where(c => Categories.All.Contains(c.Code)).ToListAsync(timeout.Token);
-            if (categories.Count != Categories.All.Count)
+            if (!Categories.All.ToHashSet(StringComparer.Ordinal).SetEquals(categories.Select(c => c.Code)))
             {
                 _logger.LogWarning("Database readiness failed: fixed categories have not been seeded.");
                 return false;

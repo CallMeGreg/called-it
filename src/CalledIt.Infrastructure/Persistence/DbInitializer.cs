@@ -1,5 +1,4 @@
 using CalledIt.Application.Common;
-using CalledIt.Domain;
 using CalledIt.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -41,22 +40,9 @@ public sealed class DbInitializer
             await _db.Database.MigrateAsync(ct);
         }
 
-        await SeedCategoriesAsync(ct);
+        await FixedCategorySeeder.SeedAsync(_db, ct);
         await SeedResolutionSourcesAsync(ct);
         await SeedAdminsAsync(ct);
-    }
-
-    private async Task SeedCategoriesAsync(CancellationToken ct)
-    {
-        foreach (var code in Categories.All)
-        {
-            if (!await _db.Categories.AnyAsync(c => c.Code == code, ct))
-            {
-                _db.Categories.Add(new Category { Code = code, DisplayName = Categories.DisplayName(code) });
-            }
-        }
-
-        await _db.SaveChangesAsync(ct);
     }
 
     private async Task SeedResolutionSourcesAsync(CancellationToken ct)

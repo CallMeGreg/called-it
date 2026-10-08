@@ -224,7 +224,9 @@ Implemented routes are anonymous `/health/live` (with `/health` as a compatibili
 alias) and `/health/ready`. Readiness checks core schema/seed reads with a bounded
 timeout and generic 503 failures; it never exposes connection details in the
 response. Non-Development startup uses the same read-only prerequisite checks.
-There is still no separately delivered production migrator/seed command.
+A separate [migration/category-seed executable and SQL Server lane](database-lifecycle.md)
+now cover the bootstrap prerequisites. Authorization and execution with the
+intended Azure principals/network remain separate owner gates, not startup work.
 
 The integrated IaC mirrors the runtime's safe defaults. `infra/main.bicep` owns
 only the lean foundation; `infra/application.bicep` deploys explicit digest-pinned
