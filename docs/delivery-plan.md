@@ -13,7 +13,7 @@ app, deleting old resources, or overwriting another prototype branch.
 | 1. Competition integrity | Versioned publication/acceptance, realistic event cutoffs, enrollment semantics, outbox/leases, chronological scoring, corrections, SQL concurrency. | Full deterministic round and restart/duplicate/lock tests pass against the production database provider. |
 | 2. Identity and privacy | Select managed phone verification; complete phone/social challenge binding, session rotation/recovery, deletion/export, operator roles, block/report. | No bypass/test identity in release; vendor-backed and failure flows exercised on devices; privacy data inventory complete. |
 | 3. Cross-platform vertical slice | Expo native development builds; onboarding, Today, receipts, results/history, standings/You, secure storage and deep links. | A real iOS and Android device completes the same round against the API, including offline/late/error states. |
-| 4. Retention and operations | Season/achievement rules, content operator UI, licensed feeds/manual evidence, notification preferences/installations/dispatcher, minimal telemetry. | Durable replay/correction works; all push categories honor consent/expiry; two upcoming real rounds are reviewed. |
+| 4. Retention and operations | Approved achievement catalog, content operator UI, licensed feeds/manual evidence, notification preferences/installations/dispatcher, minimal telemetry; seasons deferred beyond beta. | Durable replay/correction works; all push categories honor consent/expiry; two upcoming real rounds are reviewed. |
 | 5. Regional closed beta | Named Azure region/SKUs, measured cost/load/recovery, security review, store-account checks, moderated UX sessions. | No unresolved release blocker; owners accept measured limitations and can operate/restore the service. |
 | 6. Store release and expansion | Store review, signing, disclosures, staged rollout, support, acquisition limits. | Both stores approved; observed reliability/retention/cost justify expanding cohort or geography. |
 
@@ -53,10 +53,14 @@ implements the complete game, privacy flows or native client. See the
 
 ### Next implementation sequence
 
-First ratify D1-D4 and D8; these determine eligibility, content timing and the
-competition state machine. Phase 1 now has a **real SQL Server test lane and
-separate migrator/category-seed command** for review; retain these checks while
-implementing publication/atomic choice receipts, durable outbox/claims and ordered progression.
+The owner ratified D3 and D4 on 2026-10-08; implement the
+[versioned competition/discovery rules](product.md), not the old miss-reset,
+summed-global-streak, seasonal or six-hour hypotheses. Finish D1 age/consent
+requirements, D2 content-calendar validation and D8 measured recovery objectives
+before treating those gates as complete. Phase 1 now has a **real SQL Server test
+lane and separate migrator/category-seed command**; retain these checks while
+implementing publication/atomic choice receipts, durable outbox/claims and ordered
+progression.
 This closes the correctness gap instead of merely making more screens interactive.
 
 In parallel with that bounded work, the owner can prove the D5 identity-provider
@@ -71,10 +75,10 @@ identity/privacy, native builds and the other release gates below are satisfied.
 
 | Area | Required cases |
 | --- | --- |
-| Publication | Duplicate workers/admin retries, no partial set, one question per category, unique round identity, expired/resolved/event-started content rejected, restart after missed drop. |
+| Publication | Duplicate workers/admin retries, no partial set, one question per category per day, unique persisted random schedule, Eastern DST boundaries, no pre-drop schedule leak, 30-minute cutoff buffer, expired/resolved/event-started content rejected, restart after missed drop. |
 | Acceptance | Before drop, just before/at/after lock, transaction stalls across lock, duplicate request ID, conflicting payload reuse, concurrent edits, stale revision, invalid enum, malicious user/set/question ID. |
 | Enrollment | Newcomer before drop/during open/at lock, no pre-account penalties, blocked/banned account, no stale today's-round response. |
-| Scoring | All correct/wrong/skip/missed/void; mixed categories; delayed earlier outcome; same event twice; crash after outcome commit; conflicting amend; full replay equals projection. |
+| Scoring | Skip/unanswered neutral; independent global/category trackers; mixed correct/wrong daily global reset independent of result order; delayed earlier outcome; 48-hour neutral timeout and late-source revival; fairness void never revived by source arrival; duplicate/crash/amend replay equals projection. |
 | Boards | Equal scores, bounded/paginated reads, top plus around-me, accepted-friends scope, block/delete, restart/cache loss, stale projection labeling and deterministic as-of ordering. |
 | Achievements | First award, retry, correction/revocation, participation versus result-dependent badge, backfill and definition version. |
 | Identity | Wrong audience/issuer/expiry/signature/nonce, identity already owned elsewhere, phone reuse, send/verify limits, atomic OTP/refresh consumption, recovery, logout, deletion and lost credentials. |
@@ -82,18 +86,21 @@ identity/privacy, native builds and the other release gates below are satisfied.
 | Native UX | VoiceOver/TalkBack, large text, narrow phones, dark mode, reduce motion, interrupted sign-in, OS background/foreground, slow network, real app links and production-style signing. |
 | Infrastructure | Missing env/secret, clean bootstrap, redeploy preserves image, SQL user/schema readiness, failed revision rollback, data-plane restrictions, provider/SKU/quota errors, restore and teardown plan. |
 
-## Decisions requiring owner input
+## Decision register and remaining owner input
 
-| ID | Decision | Recommendation / why it blocks |
+Recorded from owner answers on **2026-10-08**. "Decided" is not "implemented";
+the completed decision boxes are D3 and D4 only.
+
+| ID | Decision | Approved status / remaining requirement |
 | --- | --- | --- |
-| D1 | Beta countries, language and age audience | Start narrowly; English-speaking US adults is a proposal, not an approved restriction or official age rating. Determines SMS, content and privacy obligations. |
-| D2 | UTC drop, window duration and event cutoff buffer | Test the six-hour hypothesis with the target cohort and actual event calendar. Do not inherit 17:00 UTC unquestioned. |
-| D3 | Final scoring/season/achievement rules | Approve Skip/miss/void behavior, newcomer eligibility, season boundaries, tied ranks, correction window and initial badge catalog before implementing versions. |
-| D4 | Contact discovery | Defer contact upload/matching; use invite links first. Mandatory phone verification need not imply discoverability. |
+| D1 | Beta countries, language and age audience | **Partial:** US and Canada, English only, no additional product-imposed age floor. Establish actual store and legal age/consent requirements plus Canadian language obligations before completing this gate. |
+| D2 | Drop, window duration and event cutoff buffer | **Partial:** surprise random opening noon-5 p.m. Eastern, one-hour window, minimum 30-minute event/information buffer. Selected time stays hidden; encourage optional live notifications. Validate actual content-calendar compatibility. |
+| D3 | Scoring, finality and achievements | **Decided:** [beta-2026-10-08](product.md), including neutral misses, separate global/category streaks, lifetime-only boards, shared competition ranks, correctable source-final outcomes, reversible 48-hour timeout voids and exact achievement thresholds. Seasons deferred. Implementation remains open. |
+| D4 | Contact discovery | **Decided:** invite links only; defer contact upload/matching. Mandatory phone verification does not imply discoverability. Implementation remains open. |
 | D5 | Identity/phone-verification supplier | Compare managed CIAM with managed verification plus app-owned sessions. Prove phone/social binding, phone evidence/uniqueness, re-verification cadence, country support, anti-fraud, recovery and pricing. See the sourced candidate comparison; no vendor is selected. |
 | D6 | Content/feed licenses and editorial owner | Choose dependable sports/finance/culture sources, fallback evidence and a human daily operator/backup. "API exists" is not a commercial license. |
 | D7 | Azure region/SKUs and actual estimate | Check the subscription's real constraints and quote within the USD 100-250 envelope, with headroom; accept measured availability trade-offs explicitly. |
-| D8 | Outage fairness and operational coverage | Approve objective void/replacement thresholds, escalation owner, support hours and recovery objectives. |
+| D8 | Outage fairness and operational coverage | **Partial:** globally neutral void with no replacement at 10 cumulative outage minutes, or 2 continuous minutes in the final 5. CallMeGreg is incident owner; best-effort support only. Numerical recovery targets deliberately deferred until restore/cost measurements exist. |
 | D9 | Store/legal/privacy readiness | Confirm publishing entity, target audience, phone-data necessity, policies, licenses and data retention with appropriate advice. |
 
 ## Manual setup and launch checklist
@@ -122,7 +129,7 @@ No passwords, tokens, private keys or verification codes belong in documentation
 
 | Owner | Action | Evidence required before release |
 | --- | --- | --- |
-| Product owner | Ratify D1-D4 and D8; write player-facing rules and support commitments. | Signed-off rule/version table and cohort schedule. |
+| Product owner | Complete remaining D1/D2/D8 requirements; preserve ratified D3/D4 and write accurate player-facing rules/support limitations. | Versioned decision table plus age/consent, content-calendar and measured recovery evidence. |
 | Azure owner | Select subscription/resource groups, naming/tags, allowed region and provider registrations; inspect policies, quotas and actual SKU availability. | Recorded read-only validation plus current calculator estimate. |
 | Azure owner | Configure cost/forecast alerts and a named budget responder; separately cap verification spend. | Alert delivery exercised, provider/compute/query limits documented. |
 | Azure + GitHub owner | Establish environment-scoped OIDC federation and minimum deploy roles; separate role-assignment bootstrap from ordinary deployment where possible. | No long-lived Azure password; correct repository/environment subject and protected prod environment. |

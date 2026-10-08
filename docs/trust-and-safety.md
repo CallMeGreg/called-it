@@ -152,8 +152,11 @@ until these controls and staffing exist.
 Mandatory phone plus social sign-in is an owner choice, **not a guarantee of store
 approval**. Document why each item is necessary for core account/integrity features
 and validate that justification against data-minimization/review requirements.
-Age eligibility and jurisdiction-specific privacy obligations require owner/legal
-review; an age rating is not a substitute for consent policy.
+The selected audience is an English-language US/Canada beta with no additional
+product-imposed age floor. Actual age eligibility, store questionnaire outcomes,
+Canadian language requirements and jurisdiction-specific privacy/consent
+obligations remain unresolved; an age rating is not a substitute for consent
+policy. This decision does not by itself approve enrollment of children.
 
 ## Before public testing
 

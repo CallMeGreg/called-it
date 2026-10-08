@@ -1,6 +1,7 @@
 # Operations, notifications, and long-term health
 
-Status: proposed operating model and acceptance targets, not a deployed SLA.
+Status: the 2026-10-08 outage/support decisions below are approved; other operating
+model and acceptance targets remain proposals, not a deployed SLA.
 Actual provisioning behavior is documented in [infra](../infra/README.md).
 
 ## A budget-conscious Azure beta
@@ -115,6 +116,11 @@ provider handoff, provider error, and user-open telemetry. A duplicate push must
 not duplicate game actions. The app re-fetches the round on open; a displayed
 notification can be stale even after its delivery TTL expires.
 
+The approved surprise opening makes the live-drop notification important.
+Strongly encourage permission after explaining its value, but keep it optional
+and respect quiet hours/preferences. Do not disclose the drawn opening time in
+a pre-drop message. Denied or delayed push does not authorize late acceptance.
+
 ## Observability and operator routines
 
 Required signals: accepted/rejected picks by reason, clock/deadline conflicts,
@@ -138,11 +144,24 @@ Prepare operator runbooks for a missed drop, partial publication, acceptance
 outage near lock, bad outcome, SMS abuse, identity-provider outage, stalled scoring,
 credential compromise, notification spam, data breach and region failure.
 
-Proposed competition policy: a verified service-wide submission failure that
-materially prevents fair participation leads to a globally neutral void or an
-announced replacement round. Do not selectively accept client timestamps, grant
-private late picks, or extend a window once relevant outcomes can be known.
-Approve objective outage thresholds and the decision owner before beta.
+Owner-approved policy, **2026-10-08**:
+
+| Decision | Rule |
+| --- | --- |
+| Outage threshold | Confirmed service-wide submission outage totaling at least 10 cumulative minutes during the one-hour window, or at least 2 continuous minutes within its final 5 minutes. |
+| Remedy | Void the whole round for everyone, with neutral points/streak effects. No same-day replacement; retain one question per category per day. |
+| Incident authority | CallMeGreg is the initial incident decision owner. No backup operator has yet been appointed. |
+| Human support | Best effort only, with no guaranteed staffed hours. Publish that limitation; do not represent it as live-window or 24-hour coverage. |
+| Recovery objectives | Numerical recovery time/data-loss targets are deferred until actual restore capabilities and costs have been measured. D8 remains incomplete. |
+
+Instrumentation, outage detection, audited declarations and the actual response
+workflow still need implementation and exercises. Source results arriving later
+do not revive a fairness-voided round; this differs from the reversible 48-hour
+unresolved-result timeout in [the product rules](product.md#scoring-and-finality).
+Do not selectively accept client timestamps, grant private late picks, or extend
+a window once relevant outcomes can be known. Partial publication, unsafe content
+and other integrity failures still require the separate publication/content gates;
+the outage threshold is not permission to serve an unfair or incomplete round.
 
 Use a game read-only/maintenance switch independently of authentication and
 notification/SMS kill switches. Surface an incident state in-app and through a
@@ -151,11 +170,12 @@ and achievements through durable jobs, then notify affected users.
 
 ## Recovery and sustainability
 
-Proposed beta targets to prove: same-region recovery within four hours with
-at most 15 minutes of recoverable-data lag; regional disaster recovery within
-24 hours with at most one hour of lag **only if** selected backup redundancy and
-restore evidence support it. Otherwise publish the weaker demonstrated objective
-or change the tier/budget before public play.
+The owner declined to set numerical recovery targets before measuring restore
+capabilities and cost. The earlier four-hour/15-minute same-region and
+24-hour/one-hour regional hypotheses are **not approved objectives**. Exercise
+the selected backup/restore topology, record actual data loss and restoration
+time with cost, then obtain approval for published recovery objectives before
+public play. Do not substitute a generic Azure capability for that evidence.
 
 Back up the data, configuration, migration history and recovery procedures, not
 just container images. Test identity grants and secrets in a restored environment,
