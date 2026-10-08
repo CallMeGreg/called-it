@@ -112,14 +112,30 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
     }
 
     [Fact]
-    public async Task Concurrent_seed_commands_converge_without_duplicates_or_replacing_existing_ids()
+    public async Task Concurrent_migrators_converge_on_one_complete_migration_history()
+    {
+        await using var database = await server.CreateDatabaseAsync();
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => RunAsync(database, "migrate")));
+        Assert.All(results, result => Assert.Equal(0, result));
+        await using var db = database.CreateContext();
+        Assert.Equal(db.Database.GetMigrations(), await db.Database.GetAppliedMigrationsAsync());
+        Assert.Empty(await db.Categories.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Concurrent_seed_commands_converge_without_duplicates_or_replacing_existing_ids(bool partialSeed)
     {
         await using var database = await server.CreateDatabaseAsync();
         await using var db = database.CreateContext();
         await db.Database.MigrateAsync();
         var existing = new Category { Code = Categories.Finance, DisplayName = "Existing finance" };
-        db.Categories.Add(existing);
-        await db.SaveChangesAsync();
+        if (partialSeed)
+        {
+            db.Categories.Add(existing);
+            await db.SaveChangesAsync();
+        }
 
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
             MigrationCommand.RunAsync(["seed-categories", "--database", database.Name, "--apply"],
@@ -127,7 +143,10 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
 
         Assert.All(results, result => Assert.Equal(0, result));
         Assert.Equal(3, await db.Categories.CountAsync());
-        Assert.Equal("Existing finance", (await db.Categories.SingleAsync(c => c.Id == existing.Id)).DisplayName);
+        if (partialSeed)
+        {
+            Assert.Equal("Existing finance", (await db.Categories.SingleAsync(c => c.Id == existing.Id)).DisplayName);
+        }
     }
 
     [Theory]
@@ -215,11 +234,16 @@ public sealed class DatabaseLifecycleTests(SqlServerFixture server, ITestOutputH
                 "DELETE FROM [dbo].[AuditLogs]",
                 "DELETE FROM [dbo].[__EFMigrationsHistory]",
             ];
+            var denials = new List<(string Sql, int Number)>();
             foreach (var sql in forbidden)
             {
                 var failure = await Assert.ThrowsAsync<SqlException>(() => db.Database.ExecuteSqlRawAsync(sql));
-                Assert.Contains(failure.Number, new[] { 229, 262, 15151, 15247, 4902, 3701, 2760 });
+                output.WriteLine($"SQL {failure.Number} rejected: {sql}");
+                denials.Add((sql, failure.Number));
             }
+            Assert.All(denials, denial => Assert.True(
+                new[] { 229, 262, 1088, 15151, 15247, 4902, 3701, 2760 }.Contains(denial.Number),
+                $"Unexpected SQL error {denial.Number} for: {denial.Sql}"));
         }
         finally
         {

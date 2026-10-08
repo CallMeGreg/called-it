@@ -106,8 +106,9 @@ is involved.
 The lane covers:
 
 - Clean bootstrap, twice-applied offline SQL, refusal to create a missing database,
-  the populated initial-schema upgrade, repeat migration/seed,
-  unknown history, partial/noncanonical seeds and eight concurrent seed commands.
+  the populated initial-schema upgrade, repeat migration/seed, four concurrent
+  migrators, unknown history, and eight concurrent seed commands against both
+  empty and partial seeds, plus noncanonical-seed rejection.
 - SQL-translated bounded standings/friends filtering and native `datetimeoffset`
   ordering with a frozen clock, without resolving outcomes during open choices.
 - Case/accent-sensitive subjects, SQL trailing-space ownership rejection, actual
